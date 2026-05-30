@@ -1,0 +1,39 @@
+// Shoal AI — database schema (PostgreSQL via Prisma)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SwarmStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id      String  @id @default(cuid())
+  email   String  @unique
+  credits Int     @default(0)
+  swarms  Swarm[]
+}
+
+model Swarm {
+  id         String      @id @default(cuid())
+  userId     String
+  premise    String
+  status     SwarmStatus @default(PENDING)
+  agentCount Int
+  resultData Json?
+  createdAt  DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
