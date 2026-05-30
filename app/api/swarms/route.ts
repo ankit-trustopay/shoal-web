@@ -78,6 +78,17 @@ export async function POST(request: Request) {
       },
     });
 
+    const engineUrl = process.env.MIROFISH_ENGINE_URL?.trim();
+
+    if (!engineUrl) {
+      console.log("Mocking MiroFish engine call");
+      await prisma.swarm.update({
+        where: { id: swarm.id },
+        data: { status: "RUNNING" },
+      });
+      return corsJsonResponse({ swarmId: swarm.id }, 201);
+    }
+
     try {
       await dispatchSwarmToMirofish({
         swarmId: swarm.id,
