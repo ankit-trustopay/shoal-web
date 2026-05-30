@@ -1,17 +1,30 @@
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
-import { jsonError, jsonOk } from "@/lib/api-response";
-import { corsPreflightResponse } from "@/lib/cors";
 import { dispatchSwarmToMirofish, MirofishEngineError } from "@/lib/mirofish";
 import { prisma } from "@/lib/prisma";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+const SEED_USER_ID = "test-user-001";
+
+function corsJsonResponse(body: unknown, status: number) {
+  return NextResponse.json(body, { status, headers: corsHeaders });
+}
+
 /**
  * OPTIONS /api/swarms
- * CORS preflight for shoal-ui (separate Vercel origin).
+ * CORS preflight for shoal-ui (cross-origin Vercel deployment).
  */
-export function OPTIONS(request: NextRequest) {
-  return corsPreflightResponse(request);
+export async function OPTIONS(_request: Request) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: corsHeaders,
+  });
 }
 
 /**
@@ -19,28 +32,41 @@ export function OPTIONS(request: NextRequest) {
  * Creates a swarm job, dispatches it to MiroFish, returns swarmId for Live Console redirect.
  *
  * Body: { userId, premise, agentCount }
- * (userId will come from session once Auth is wired up)
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   let body: unknown;
 
   try {
     body = await request.json();
   } catch {
-    return jsonError("Invalid JSON body", 400, undefined, request);
+    return corsJsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
   const parsed = parseCreateSwarmBody(body);
   if (!parsed.ok) {
-    return jsonError(parsed.error, 400, undefined, request);
+    return corsJsonResponse({ error: parsed.error }, 400);
   }
 
   const { userId, premise, agentCount } = parsed.data;
 
   try {
+    const seedUser = await prisma.user.findUnique({
+      where: { id: SEED_USER_ID },
+    });
+
+    if (!seedUser) {
+      await prisma.user.create({
+        data: {
+          id: SEED_USER_ID,
+          email: "founder@shoalai.com",
+          credits: 1000,
+        },
+      });
+    }
+
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
-      return jsonError("User not found", 404, undefined, request);
+      return corsJsonResponse({ error: "User not found" }, 404);
     }
 
     const swarm = await prisma.swarm.create({
@@ -74,19 +100,28 @@ export async function POST(request: NextRequest) {
           ? engineError.message
           : "Failed to reach MiroFish engine";
 
-      return jsonError(message, 502, { swarmId: swarm.id }, request);
+      return corsJsonResponse(
+        {
+          error: message,
+          ...(process.env.NODE_ENV === "development"
+            ? { details: { swarmId: swarm.id } }
+            : {}),
+        },
+        502,
+      );
     }
 
-    return jsonOk({ swarmId: swarm.id }, 201, request);
+    return corsJsonResponse({ swarmId: swarm.id }, 201);
   } catch (error) {
+    console.error("[POST /api/swarms] Database error:", error);
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      return jsonError("Invalid userId", 400, undefined, request);
+      return corsJsonResponse({ error: "Invalid userId" }, 400);
     }
 
-    console.error("[POST /api/swarms]", error);
-    return jsonError("Internal server error", 500, undefined, request);
+    return corsJsonResponse({ error: "Internal server error" }, 500);
   }
 }
