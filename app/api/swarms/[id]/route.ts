@@ -19,7 +19,12 @@ type RouteContext = {
  * OPTIONS /api/swarms/[id]
  * CORS preflight for shoal-ui (cross-origin Vercel deployment).
  */
-export async function OPTIONS(_request: Request) {
+export async function OPTIONS(
+  _request: Request,
+  { params }: RouteContext,
+) {
+  await params;
+
   return new NextResponse(null, {
     status: 200,
     headers: corsHeaders,
@@ -30,8 +35,8 @@ export async function OPTIONS(_request: Request) {
  * GET /api/swarms/[id]
  * Returns a single swarm record by id.
  */
-export async function GET(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
+export async function GET(_request: Request, { params }: RouteContext) {
+  const { id } = await params;
 
   if (!id?.trim()) {
     return corsJsonResponse({ error: "Swarm id is required" }, 400);
