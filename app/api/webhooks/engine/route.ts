@@ -4,8 +4,17 @@ import { jsonError, jsonOk } from "@/lib/api-response";
 import { extractAgentProfiles, type EngineIgnitePayload } from "@/lib/engine-payload";
 import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
 import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
+import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { prisma } from "@/lib/prisma";
 import { isWebhookAuthorized } from "@/lib/webhook-auth";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
 
 function looksLikeIgnitePayload(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -22,7 +31,7 @@ function looksLikeIgnitePayload(value: unknown): boolean {
 
 /**
  * POST /api/webhooks/engine
- * Callback when a simulation completes (flat ignite payload or nested reportData).
+ * Callback when a simulation completes or fails.
  */
 export async function POST(request: NextRequest) {
   if (!isWebhookAuthorized(request)) {
@@ -35,6 +44,40 @@ export async function POST(request: NextRequest) {
     body = await request.json();
   } catch {
     return jsonError("Invalid JSON body", 400);
+  }
+
+  if (isRecord(body) && body.status === "FAILED") {
+    if (!isNonEmptyString(body.swarmId)) {
+      return jsonError("swarmId is required", 400);
+    }
+
+    const swarmId = body.swarmId.trim();
+    const errorMessage =
+      typeof body.error === "string" && body.error.trim().length > 0
+        ? body.error.trim()
+        : "Engine ignite failed";
+
+    try {
+      const result = await markSwarmFailedAndRefund(swarmId, errorMessage);
+
+      if (!result.ok) {
+        if (result.reason === "not_found") {
+          return jsonError("Swarm not found", 404);
+        }
+        return jsonError("Swarm already completed; refund skipped", 409);
+      }
+
+      return jsonOk({
+        swarmId,
+        status: "FAILED",
+        persisted: true,
+        refundedCredits: result.refundedCredits,
+        alreadyRefunded: result.alreadyRefunded,
+      });
+    } catch (error) {
+      console.error("[POST /api/webhooks/engine] FAILED handler:", error);
+      return jsonError("Internal server error", 500);
+    }
   }
 
   const parsed = extractEngineIgnitePayload(body);

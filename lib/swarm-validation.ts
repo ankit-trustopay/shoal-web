@@ -1,6 +1,13 @@
+const ALLOWED_SWARM_MODELS = new Set([
+  "gpt-4o",
+  "claude-3.5-sonnet",
+  "deepseek-v3",
+]);
+
 export interface CreateSwarmInput {
   premise: string;
   agentCount: number;
+  model: string;
 }
 
 export interface EngineWebhookInput {
@@ -19,7 +26,7 @@ export function parseCreateSwarmBody(
     return { ok: false, error: "Request body must be a JSON object" };
   }
 
-  const { premise, agentCount } = body as Record<string, unknown>;
+  const { premise, agentCount, model } = body as Record<string, unknown>;
 
   if (!isNonEmptyString(premise)) {
     return { ok: false, error: "premise is required" };
@@ -33,11 +40,21 @@ export function parseCreateSwarmBody(
     return { ok: false, error: "agentCount must be between 1 and 10000" };
   }
 
+  const modelId =
+    typeof model === "string" && model.trim().length > 0
+      ? model.trim()
+      : "gpt-4o";
+
+  if (!ALLOWED_SWARM_MODELS.has(modelId)) {
+    return { ok: false, error: "model must be a supported AI model" };
+  }
+
   return {
     ok: true,
     data: {
       premise: premise.trim(),
       agentCount,
+      model: modelId,
     },
   };
 }

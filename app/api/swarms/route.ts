@@ -6,6 +6,7 @@ import { computeSwarmCreditCost } from "@/lib/billing";
 import { ensureClerkUser } from "@/lib/ensure-clerk-user";
 import { runEngineIgniteAndPersist } from "@/lib/persist-engine-ignite";
 import { prisma } from "@/lib/prisma";
+import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
 import { corsHeaderValues } from "@/lib/cors";
 
@@ -60,7 +61,7 @@ export async function OPTIONS() {
  * Creates a swarm job, returns swarmId immediately, runs engine in the background.
  * Deducts credits atomically before enqueueing the engine (1 agent = 1 credit).
  *
- * Body: { premise, agentCount }
+ * Body: { premise, agentCount, model? }
  */
 export async function POST(request: Request) {
   const authResult = await requireAuthUserId();
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
     return corsJsonResponse({ error: parsed.error }, 400);
   }
 
-  const { premise, agentCount } = parsed.data;
+  const { premise, agentCount, model } = parsed.data;
   const cost = computeSwarmCreditCost(agentCount);
 
   try {
@@ -111,6 +112,7 @@ export async function POST(request: Request) {
           agentCount,
           cost,
           status: "RUNNING",
+          resultData: { model },
         },
       });
     });
@@ -124,17 +126,19 @@ export async function POST(request: Request) {
 
     after(async () => {
       try {
-        await runEngineIgniteAndPersist(swarm.id, premise, agentCount);
+        await runEngineIgniteAndPersist(swarm.id, premise, agentCount, model);
       } catch (engineError) {
         console.error(
           "[POST /api/swarms] Background engine error:",
           engineError,
         );
         try {
-          await prisma.swarm.update({
-            where: { id: swarm.id },
-            data: { status: "FAILED" },
-          });
+          await markSwarmFailedAndRefund(
+            swarm.id,
+            engineError instanceof Error
+              ? engineError.message
+              : "Background engine error",
+          );
         } catch (updateError) {
           console.error(
             "[POST /api/swarms] Failed to mark swarm FAILED:",

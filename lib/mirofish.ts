@@ -7,6 +7,7 @@ export interface IgniteEnginePayload {
   premise: string;
   swarmSize?: number;
   agentCount?: number;
+  model?: string;
 }
 
 export async function igniteEngine(

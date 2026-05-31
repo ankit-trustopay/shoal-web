@@ -4,6 +4,7 @@ import {
   type EngineIgnitePayload,
 } from "@/lib/engine-payload";
 import { igniteEngine } from "@/lib/mirofish";
+import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -52,6 +53,18 @@ export async function persistEngineIgniteResult(
   const metadataUpdate = buildSwarmMetadataUpdate(engineData);
   const evidenceRows = normalizeEvidenceItems(engineData.evidence);
 
+  if (
+    metadataUpdate.resultData &&
+    existing.resultData &&
+    typeof existing.resultData === "object" &&
+    !Array.isArray(existing.resultData)
+  ) {
+    metadataUpdate.resultData = {
+      ...(existing.resultData as Record<string, unknown>),
+      ...(metadataUpdate.resultData as Record<string, unknown>),
+    } as Prisma.InputJsonValue;
+  }
+
   await prisma.swarm.update({
     where: { id: swarmId },
     data: {
@@ -74,6 +87,7 @@ export async function runEngineIgniteAndPersist(
   swarmId: string,
   premise: string,
   agentCount?: number,
+  model?: string,
 ): Promise<void> {
   await prisma.swarm.update({
     where: { id: swarmId },
@@ -87,6 +101,7 @@ export async function runEngineIgniteAndPersist(
       ...(agentCount !== undefined
         ? { swarmSize: agentCount, agentCount }
         : {}),
+      ...(model ? { model } : {}),
     },
     { timeoutMs: 120_000 },
   );
@@ -99,10 +114,10 @@ export async function runEngineIgniteAndPersist(
       engineResponse.statusText,
       errorBody,
     );
-    await prisma.swarm.update({
-      where: { id: swarmId },
-      data: { status: "FAILED" },
-    });
+    await markSwarmFailedAndRefund(
+      swarmId,
+      errorBody.trim() || `Engine HTTP ${engineResponse.status}`,
+    );
     return;
   }
 
@@ -113,10 +128,10 @@ export async function runEngineIgniteAndPersist(
       "[runEngineIgniteAndPersist] Engine returned no messages:",
       engineData,
     );
-    await prisma.swarm.update({
-      where: { id: swarmId },
-      data: { status: "FAILED" },
-    });
+    await markSwarmFailedAndRefund(
+      swarmId,
+      "Engine returned no messages",
+    );
     return;
   }
 
