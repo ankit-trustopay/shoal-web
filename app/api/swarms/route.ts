@@ -93,6 +93,27 @@ export async function POST(request: Request) {
           errorBody,
         );
       } else {
+        const engineData = (await engineResponse.json()) as {
+          response?: string;
+        };
+
+        const aiText = engineData.response?.trim();
+
+        if (aiText) {
+          await prisma.message.create({
+            data: {
+              swarmId: swarm.id,
+              text: aiText,
+              role: "Financial Skeptic",
+            },
+          });
+        } else {
+          console.error(
+            "[POST /api/swarms] Engine /ignite returned no response text:",
+            engineData,
+          );
+        }
+
         await prisma.swarm.update({
           where: { id: swarm.id },
           data: { status: "RUNNING" },

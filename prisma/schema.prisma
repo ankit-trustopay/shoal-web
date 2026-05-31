@@ -32,8 +32,21 @@ model Swarm {
   resultData Json?
   createdAt  DateTime    @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
 
   @@index([userId])
   @@index([status])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  swarmId   String
+  text      String
+  role      String
+  createdAt DateTime @default(now())
+
+  swarm Swarm @relation(fields: [swarmId], references: [id], onDelete: Cascade)
+
+  @@index([swarmId])
 }

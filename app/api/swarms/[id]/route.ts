@@ -45,6 +45,11 @@ export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const swarm = await prisma.swarm.findUnique({
       where: { id: id.trim() },
+      include: {
+        messages: {
+          orderBy: { createdAt: "asc" },
+        },
+      },
     });
 
     if (!swarm) {
