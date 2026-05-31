@@ -14,7 +14,8 @@ const prisma = new PrismaClient({ adapter });
 const SEED_USER = {
   id: "test-user-001",
   email: "founder@shoalai.com",
-  credits: 1000,
+  credits: 50,
+  plan: "FREE",
 } as const;
 
 async function main() {
@@ -24,6 +25,7 @@ async function main() {
     update: {
       email: SEED_USER.email,
       credits: SEED_USER.credits,
+      plan: SEED_USER.plan,
     },
   });
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import { corsJsonResponse, requireAuthUserId } from "@/lib/api-auth";
+import { computeSwarmCreditCost } from "@/lib/billing";
 import { ensureClerkUser } from "@/lib/ensure-clerk-user";
 import { runEngineIgniteAndPersist } from "@/lib/persist-engine-ignite";
 import { prisma } from "@/lib/prisma";
@@ -57,6 +58,7 @@ export async function OPTIONS() {
 /**
  * POST /api/swarms
  * Creates a swarm job, returns swarmId immediately, runs engine in the background.
+ * Deducts credits atomically before enqueueing the engine (1 agent = 1 credit).
  *
  * Body: { premise, agentCount }
  */
@@ -82,18 +84,43 @@ export async function POST(request: Request) {
   }
 
   const { premise, agentCount } = parsed.data;
+  const cost = computeSwarmCreditCost(agentCount);
 
   try {
     await ensureClerkUser(userId);
 
-    const swarm = await prisma.swarm.create({
-      data: {
-        userId,
-        premise,
-        agentCount,
-        status: "RUNNING",
-      },
+    const swarm = await prisma.$transaction(async (tx) => {
+      const debit = await tx.user.updateMany({
+        where: {
+          id: userId,
+          credits: { gte: cost },
+        },
+        data: {
+          credits: { decrement: cost },
+        },
+      });
+
+      if (debit.count !== 1) {
+        return null;
+      }
+
+      return tx.swarm.create({
+        data: {
+          userId,
+          premise,
+          agentCount,
+          cost,
+          status: "RUNNING",
+        },
+      });
     });
+
+    if (!swarm) {
+      return corsJsonResponse(
+        { error: "Insufficient credits" },
+        402,
+      );
+    }
 
     after(async () => {
       try {

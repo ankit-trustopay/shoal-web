@@ -1,7 +1,6 @@
 import { currentUser } from "@clerk/nextjs/server";
+import { DEFAULT_FREE_CREDITS, DEFAULT_USER_PLAN } from "@/lib/billing";
 import { prisma } from "@/lib/prisma";
-
-const DEFAULT_FREE_CREDITS = 50;
 
 /**
  * Ensure a Prisma User row exists for the authenticated Clerk user.
@@ -23,6 +22,7 @@ export async function ensureClerkUser(userId: string) {
       id: userId,
       email,
       credits: DEFAULT_FREE_CREDITS,
+      plan: DEFAULT_USER_PLAN,
     },
   });
 }
