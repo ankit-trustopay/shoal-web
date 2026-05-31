@@ -94,24 +94,37 @@ export async function POST(request: Request) {
         );
       } else {
         const engineData = (await engineResponse.json()) as {
+          messages?: { role: string; text: string }[];
           response?: string;
         };
 
-        const aiText = engineData.response?.trim();
-
-        if (aiText) {
-          await prisma.message.create({
-            data: {
-              swarmId: swarm.id,
-              text: aiText,
-              role: "Financial Skeptic",
-            },
+        if (engineData.messages?.length) {
+          await prisma.message.createMany({
+            data: engineData.messages
+              .filter((m) => m.text?.trim())
+              .map((m) => ({
+                swarmId: swarm.id,
+                role: m.role,
+                text: m.text.trim(),
+              })),
           });
         } else {
-          console.error(
-            "[POST /api/swarms] Engine /ignite returned no response text:",
-            engineData,
-          );
+          const aiText = engineData.response?.trim();
+
+          if (aiText) {
+            await prisma.message.create({
+              data: {
+                swarmId: swarm.id,
+                text: aiText,
+                role: "Skeptic",
+              },
+            });
+          } else {
+            console.error(
+              "[POST /api/swarms] Engine /ignite returned no messages:",
+              engineData,
+            );
+          }
         }
 
         await prisma.swarm.update({
