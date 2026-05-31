@@ -1,5 +1,4 @@
 export interface CreateSwarmInput {
-  userId: string;
   premise: string;
   agentCount: number;
 }
@@ -20,11 +19,7 @@ export function parseCreateSwarmBody(
     return { ok: false, error: "Request body must be a JSON object" };
   }
 
-  const { userId, premise, agentCount } = body as Record<string, unknown>;
-
-  if (!isNonEmptyString(userId)) {
-    return { ok: false, error: "userId is required" };
-  }
+  const { premise, agentCount } = body as Record<string, unknown>;
 
   if (!isNonEmptyString(premise)) {
     return { ok: false, error: "premise is required" };
@@ -41,7 +36,6 @@ export function parseCreateSwarmBody(
   return {
     ok: true,
     data: {
-      userId: userId.trim(),
       premise: premise.trim(),
       agentCount,
     },

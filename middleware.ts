@@ -1,12 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { corsHeaderValues } from "@/lib/cors";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+const isPublicApiRoute = createRouteMatcher(["/api/webhooks/engine(.*)"]);
 
-export function middleware(request: NextRequest) {
+function withCors(response: NextResponse) {
+  for (const [key, value] of Object.entries(corsHeaderValues)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
+
+export default clerkMiddleware(async (auth, request) => {
   if (!request.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
@@ -14,18 +19,22 @@ export function middleware(request: NextRequest) {
   if (request.method === "OPTIONS") {
     return new NextResponse(null, {
       status: 200,
-      headers: corsHeaders,
+      headers: corsHeaderValues,
     });
   }
 
-  const response = NextResponse.next();
+  if (!isPublicApiRoute(request)) {
+    const { userId } = await auth();
 
-  for (const [key, value] of Object.entries(corsHeaders)) {
-    response.headers.set(key, value);
+    if (!userId) {
+      return withCors(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      );
+    }
   }
 
-  return response;
-}
+  return withCors(NextResponse.next());
+});
 
 export const config = {
   matcher: "/api/:path*",

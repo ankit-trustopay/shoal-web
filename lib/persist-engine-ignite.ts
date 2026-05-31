@@ -73,6 +73,7 @@ export async function persistEngineIgniteResult(
 export async function runEngineIgniteAndPersist(
   swarmId: string,
   premise: string,
+  agentCount?: number,
 ): Promise<void> {
   await prisma.swarm.update({
     where: { id: swarmId },
@@ -80,7 +81,13 @@ export async function runEngineIgniteAndPersist(
   });
 
   const engineResponse = await igniteEngine(
-    { swarmId, premise },
+    {
+      swarmId,
+      premise,
+      ...(agentCount !== undefined
+        ? { swarmSize: agentCount, agentCount }
+        : {}),
+    },
     { timeoutMs: 120_000 },
   );
 

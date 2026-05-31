@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
+import { corsJsonResponse, requireAuthUserId } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
-function corsJsonResponse(body: unknown, status: number) {
-  return NextResponse.json(body, { status, headers: corsHeaders });
-}
+import { corsHeaderValues } from "@/lib/cors";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -19,23 +11,26 @@ type RouteContext = {
  * OPTIONS /api/swarms/[id]
  * CORS preflight for shoal-ui (cross-origin Vercel deployment).
  */
-export async function OPTIONS(
-  _request: Request,
-  { params }: RouteContext,
-) {
+export async function OPTIONS(_request: Request, { params }: RouteContext) {
   await params;
 
   return new NextResponse(null, {
     status: 200,
-    headers: corsHeaders,
+    headers: corsHeaderValues,
   });
 }
 
 /**
  * GET /api/swarms/[id]
- * Returns a single swarm record by id.
+ * Returns a single swarm record owned by the authenticated user.
  */
 export async function GET(_request: Request, { params }: RouteContext) {
+  const authResult = await requireAuthUserId();
+  if ("response" in authResult) {
+    return authResult.response;
+  }
+
+  const { userId } = authResult;
   const { id } = await params;
 
   if (!id?.trim()) {
@@ -43,8 +38,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }
 
   try {
-    const swarm = await prisma.swarm.findUnique({
-      where: { id: id.trim() },
+    const swarm = await prisma.swarm.findFirst({
+      where: { id: id.trim(), userId },
       include: {
         messages: {
           orderBy: { createdAt: "asc" },
