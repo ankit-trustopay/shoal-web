@@ -84,6 +84,15 @@ export function normalizeAgentProfiles(
         trimString(item.backstory) ?? trimString(item.Backstory);
       if (backstory) profile.backstory = backstory;
 
+      const maritalStatus =
+        trimString(item.maritalStatus) ?? trimString(item.marital_status);
+      if (maritalStatus) profile.maritalStatus = maritalStatus;
+
+      const culturalBackground =
+        trimString(item.culturalBackground) ??
+        trimString(item.cultural_background);
+      if (culturalBackground) profile.culturalBackground = culturalBackground;
+
       return profile;
     })
     .filter((profile): profile is Record<string, unknown> => profile !== null);

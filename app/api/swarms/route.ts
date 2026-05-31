@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
-import {
-  buildSwarmMetadataUpdate,
-  normalizeEvidenceItems,
-  type EngineIgnitePayload,
-} from "@/lib/engine-payload";
-import { igniteEngine } from "@/lib/mirofish";
+import { runEngineIgniteAndPersist } from "@/lib/persist-engine-ignite";
 import { prisma } from "@/lib/prisma";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
 
@@ -22,6 +18,33 @@ function corsJsonResponse(body: unknown, status: number) {
 }
 
 /**
+ * GET /api/swarms
+ * List swarms for the default test user (newest first).
+ */
+export async function GET(_req: Request) {
+  try {
+    const swarms = await prisma.swarm.findMany({
+      where: { userId: SEED_USER_ID },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        premise: true,
+        confidence: true,
+        status: true,
+        createdAt: true,
+        cost: true,
+        runtime: true,
+      },
+    });
+
+    return corsJsonResponse(swarms, 200);
+  } catch (error) {
+    console.error("[GET /api/swarms] Database error:", error);
+    return corsJsonResponse({ error: "Internal server error" }, 500);
+  }
+}
+
+/**
  * OPTIONS /api/swarms
  * CORS preflight for shoal-ui (cross-origin Vercel deployment).
  */
@@ -34,7 +57,7 @@ export async function OPTIONS(_request: Request) {
 
 /**
  * POST /api/swarms
- * Creates a swarm job, dispatches it to the Railway engine, returns swarmId for Live Console redirect.
+ * Creates a swarm job, returns swarmId immediately, runs engine in the background.
  *
  * Body: { userId, premise, agentCount }
  */
@@ -79,79 +102,31 @@ export async function POST(request: Request) {
         userId,
         premise,
         agentCount,
-        status: "PENDING",
+        status: "RUNNING",
       },
     });
 
-    try {
-      const engineResponse = await igniteEngine({
-        swarmId: swarm.id,
-        premise,
-      });
-
-      if (!engineResponse.ok) {
-        const errorBody = await engineResponse.text().catch(() => "");
+    after(async () => {
+      try {
+        await runEngineIgniteAndPersist(swarm.id, premise);
+      } catch (engineError) {
         console.error(
-          "[POST /api/swarms] Engine /ignite failed:",
-          engineResponse.status,
-          engineResponse.statusText,
-          errorBody,
+          "[POST /api/swarms] Background engine error:",
+          engineError,
         );
-      } else {
-        const engineData = (await engineResponse.json()) as EngineIgnitePayload;
-
-        if (engineData.messages?.length) {
-          await prisma.message.createMany({
-            data: engineData.messages
-              .filter((m) => m.text?.trim())
-              .map((m) => ({
-                swarmId: swarm.id,
-                role: m.role,
-                text: m.text.trim(),
-              })),
+        try {
+          await prisma.swarm.update({
+            where: { id: swarm.id },
+            data: { status: "FAILED" },
           });
-        } else {
-          const aiText = engineData.response?.trim();
-
-          if (aiText) {
-            await prisma.message.create({
-              data: {
-                swarmId: swarm.id,
-                text: aiText,
-                role: "Skeptic",
-              },
-            });
-          } else {
-            console.error(
-              "[POST /api/swarms] Engine /ignite returned no messages:",
-              engineData,
-            );
-          }
+        } catch (updateError) {
+          console.error(
+            "[POST /api/swarms] Failed to mark swarm FAILED:",
+            updateError,
+          );
         }
-
-        const metadataUpdate = buildSwarmMetadataUpdate(engineData);
-        const evidenceRows = normalizeEvidenceItems(engineData.evidence);
-
-        await prisma.swarm.update({
-          where: { id: swarm.id },
-          data: {
-            status: "RUNNING",
-            ...metadataUpdate,
-            ...(evidenceRows.length > 0
-              ? {
-                  evidence: {
-                    createMany: {
-                      data: evidenceRows,
-                    },
-                  },
-                }
-              : {}),
-          },
-        });
       }
-    } catch (engineError) {
-      console.error("[POST /api/swarms] Engine /ignite error:", engineError);
-    }
+    });
 
     return corsJsonResponse({ swarmId: swarm.id }, 201);
   } catch (error) {

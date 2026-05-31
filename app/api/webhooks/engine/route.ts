@@ -1,17 +1,28 @@
 import { NextRequest } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import { jsonError, jsonOk } from "@/lib/api-response";
-import { extractAgentProfiles } from "@/lib/engine-payload";
+import { extractAgentProfiles, type EngineIgnitePayload } from "@/lib/engine-payload";
+import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
+import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
 import { prisma } from "@/lib/prisma";
-import { parseEngineWebhookBody } from "@/lib/swarm-validation";
 import { isWebhookAuthorized } from "@/lib/webhook-auth";
+
+function looksLikeIgnitePayload(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Array.isArray(record.messages) ||
+    typeof record.confidence === "number" ||
+    Array.isArray(record.evidence) ||
+    Array.isArray(record.agentProfiles)
+  );
+}
 
 /**
  * POST /api/webhooks/engine
- * Callback from MiroFish when a simulation completes.
- *
- * Body: { swarmId, reportData }
- * Header (production): x-engine-webhook-secret or Authorization: Bearer <secret>
+ * Callback when a simulation completes (flat ignite payload or nested reportData).
  */
 export async function POST(request: NextRequest) {
   if (!isWebhookAuthorized(request)) {
@@ -26,13 +37,12 @@ export async function POST(request: NextRequest) {
     return jsonError("Invalid JSON body", 400);
   }
 
-  const parsed = parseEngineWebhookBody(body);
-  if (!parsed.ok) {
+  const parsed = extractEngineIgnitePayload(body);
+  if ("error" in parsed) {
     return jsonError(parsed.error, 400);
   }
 
-  const { swarmId, reportData } = parsed.data;
-  const agentProfiles = extractAgentProfiles(body, reportData);
+  const { swarmId, engineData } = parsed;
 
   try {
     const existing = await prisma.swarm.findUnique({
@@ -44,15 +54,26 @@ export async function POST(request: NextRequest) {
       return jsonError("Swarm not found", 404);
     }
 
-    if (existing.status === "COMPLETED") {
-      return jsonOk({ swarmId, status: "COMPLETED", duplicate: true });
+    if (existing.status === "COMPLETED" && looksLikeIgnitePayload(engineData)) {
+      const hasMessages =
+        Array.isArray(engineData.messages) && engineData.messages.length > 0;
+      if (hasMessages) {
+        return jsonOk({ swarmId, status: "COMPLETED", duplicate: true });
+      }
     }
+
+    if (looksLikeIgnitePayload(engineData)) {
+      await persistEngineIgniteResult(swarmId, engineData as EngineIgnitePayload);
+      return jsonOk({ swarmId, status: "COMPLETED", persisted: true });
+    }
+
+    const agentProfiles = extractAgentProfiles(body, engineData);
 
     const swarm = await prisma.swarm.update({
       where: { id: swarmId },
       data: {
         status: "COMPLETED",
-        resultData: reportData as Prisma.InputJsonValue,
+        resultData: engineData as Prisma.InputJsonValue,
         ...(agentProfiles !== undefined ? { agentProfiles } : {}),
       },
       select: { id: true, status: true },

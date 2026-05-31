@@ -9,6 +9,7 @@ export interface IgniteEnginePayload {
 
 export async function igniteEngine(
   payload: IgniteEnginePayload,
+  options?: { timeoutMs?: number },
 ): Promise<Response> {
   const baseUrl = process.env.MIROFISH_ENGINE_URL?.trim().replace(/\/$/, "");
 
@@ -25,10 +26,12 @@ export async function igniteEngine(
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+
   return fetch(`${baseUrl}/ignite`, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }

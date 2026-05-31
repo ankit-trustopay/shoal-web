@@ -1,0 +1,117 @@
+import {
+  buildSwarmMetadataUpdate,
+  normalizeEvidenceItems,
+  type EngineIgnitePayload,
+} from "@/lib/engine-payload";
+import { igniteEngine } from "@/lib/mirofish";
+import { prisma } from "@/lib/prisma";
+
+/**
+ * Persist a full /ignite engine payload onto an existing swarm row.
+ * Idempotent: skips message/evidence inserts if already present.
+ */
+export async function persistEngineIgniteResult(
+  swarmId: string,
+  engineData: EngineIgnitePayload,
+): Promise<void> {
+  const existing = await prisma.swarm.findUnique({
+    where: { id: swarmId },
+    include: {
+      messages: { select: { id: true } },
+      evidence: { select: { id: true } },
+    },
+  });
+
+  if (!existing) {
+    throw new Error(`Swarm not found: ${swarmId}`);
+  }
+
+  if (engineData.messages?.length && existing.messages.length === 0) {
+    await prisma.message.createMany({
+      data: engineData.messages
+        .filter((message) => message.text?.trim())
+        .map((message) => ({
+          swarmId,
+          role: message.role,
+          text: message.text.trim(),
+        })),
+    });
+  } else if (!engineData.messages?.length) {
+    const legacyText = engineData.response?.trim();
+    if (legacyText && existing.messages.length === 0) {
+      await prisma.message.create({
+        data: {
+          swarmId,
+          text: legacyText,
+          role: "Skeptic",
+        },
+      });
+    }
+  }
+
+  const metadataUpdate = buildSwarmMetadataUpdate(engineData);
+  const evidenceRows = normalizeEvidenceItems(engineData.evidence);
+
+  await prisma.swarm.update({
+    where: { id: swarmId },
+    data: {
+      status: "COMPLETED",
+      ...metadataUpdate,
+      ...(evidenceRows.length > 0 && existing.evidence.length === 0
+        ? {
+            evidence: {
+              createMany: {
+                data: evidenceRows,
+              },
+            },
+          }
+        : {}),
+    },
+  });
+}
+
+export async function runEngineIgniteAndPersist(
+  swarmId: string,
+  premise: string,
+): Promise<void> {
+  await prisma.swarm.update({
+    where: { id: swarmId },
+    data: { status: "RUNNING" },
+  });
+
+  const engineResponse = await igniteEngine(
+    { swarmId, premise },
+    { timeoutMs: 120_000 },
+  );
+
+  if (!engineResponse.ok) {
+    const errorBody = await engineResponse.text().catch(() => "");
+    console.error(
+      "[runEngineIgniteAndPersist] Engine /ignite failed:",
+      engineResponse.status,
+      engineResponse.statusText,
+      errorBody,
+    );
+    await prisma.swarm.update({
+      where: { id: swarmId },
+      data: { status: "FAILED" },
+    });
+    return;
+  }
+
+  const engineData = (await engineResponse.json()) as EngineIgnitePayload;
+
+  if (!engineData.messages?.length && !engineData.response?.trim()) {
+    console.error(
+      "[runEngineIgniteAndPersist] Engine returned no messages:",
+      engineData,
+    );
+    await prisma.swarm.update({
+      where: { id: swarmId },
+      data: { status: "FAILED" },
+    });
+    return;
+  }
+
+  await persistEngineIgniteResult(swarmId, engineData);
+}
