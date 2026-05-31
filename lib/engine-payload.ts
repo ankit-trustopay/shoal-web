@@ -7,6 +7,12 @@ export type EngineEvidenceItem = {
   snippet?: string;
 };
 
+export type EngineRecommendedAction = {
+  step?: number;
+  title?: string;
+  body?: string;
+};
+
 export type EngineIgnitePayload = {
   messages?: { role: string; text: string }[];
   response?: string;
@@ -18,6 +24,8 @@ export type EngineIgnitePayload = {
   cost?: number;
   evidence?: EngineEvidenceItem[];
   agentProfiles?: unknown[];
+  recommendedActions?: EngineRecommendedAction[];
+  minorityDissent?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -140,6 +148,52 @@ export function toOptionalFloat(value: unknown): number | undefined {
   return undefined;
 }
 
+function normalizeRecommendedActions(
+  items: EngineRecommendedAction[] | undefined,
+): Prisma.InputJsonValue | undefined {
+  if (!items?.length) return undefined;
+
+  const actions = items
+    .map((item, index) => {
+      const title = trimString(item.title);
+      const body = trimString(item.body);
+      if (!title || !body) return null;
+
+      const step =
+        typeof item.step === "number" && Number.isFinite(item.step)
+          ? Math.max(1, Math.trunc(item.step))
+          : index + 1;
+
+      return { step, title, body };
+    })
+    .filter(
+      (item): item is { step: number; title: string; body: string } =>
+        item !== null,
+    );
+
+  if (!actions.length) return undefined;
+  return actions as Prisma.InputJsonValue;
+}
+
+export function buildResultData(
+  data: EngineIgnitePayload,
+): Prisma.InputJsonValue | undefined {
+  const payload: Record<string, unknown> = {};
+
+  const recommendedActions = normalizeRecommendedActions(data.recommendedActions);
+  if (recommendedActions !== undefined) {
+    payload.recommendedActions = recommendedActions;
+  }
+
+  const minorityDissent = trimString(data.minorityDissent);
+  if (minorityDissent) {
+    payload.minorityDissent = minorityDissent;
+  }
+
+  if (Object.keys(payload).length === 0) return undefined;
+  return payload as Prisma.InputJsonValue;
+}
+
 export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
   const update: {
     confidence?: number;
@@ -149,6 +203,7 @@ export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
     runtime?: number;
     cost?: number;
     agentProfiles?: Prisma.InputJsonValue;
+    resultData?: Prisma.InputJsonValue;
   } = {};
 
   const confidence = toOptionalInt(data.confidence);
@@ -166,6 +221,9 @@ export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
   if (runtime !== undefined) update.runtime = runtime;
   if (cost !== undefined) update.cost = cost;
   if (agentProfiles !== undefined) update.agentProfiles = agentProfiles;
+
+  const resultData = buildResultData(data);
+  if (resultData !== undefined) update.resultData = resultData;
 
   return update;
 }
