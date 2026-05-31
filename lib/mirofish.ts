@@ -1,42 +1,20 @@
 /**
- * HTTP bridge to the external MiroFish (Python) swarm engine.
+ * HTTP bridge to the Shoal AI Engine (FastAPI on Railway).
  */
 
-export interface MirofishDispatchPayload {
+export interface IgniteEnginePayload {
   swarmId: string;
   premise: string;
-  agentCount: number;
 }
 
-export class MirofishEngineError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode?: number,
-  ) {
-    super(message);
-    this.name = "MirofishEngineError";
+export async function igniteEngine(
+  payload: IgniteEnginePayload,
+): Promise<Response> {
+  const baseUrl = process.env.MIROFISH_ENGINE_URL?.trim().replace(/\/$/, "");
+
+  if (!baseUrl) {
+    throw new Error("MIROFISH_ENGINE_URL is not configured");
   }
-}
-
-function getEngineBaseUrl(): string {
-  const url = process.env.MIROFISH_ENGINE_URL;
-  if (!url) {
-    throw new MirofishEngineError(
-      "MIROFISH_ENGINE_URL is not configured on the server",
-    );
-  }
-  return url.replace(/\/$/, "");
-}
-
-/**
- * Notifies MiroFish to start processing a swarm job.
- * Expects the engine to accept POST JSON: { swarmId, premise, agentCount }.
- */
-export async function dispatchSwarmToMirofish(
-  payload: MirofishDispatchPayload,
-): Promise<void> {
-  const baseUrl = getEngineBaseUrl();
-  const endpoint = `${baseUrl}/swarms/run`;
 
   const headers: HeadersInit = {
     "Content-Type": "application/json",
@@ -47,18 +25,10 @@ export async function dispatchSwarmToMirofish(
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(endpoint, {
+  return fetch(`${baseUrl}/ignite`, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30_000),
   });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new MirofishEngineError(
-      `MiroFish engine returned ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
-      response.status,
-    );
-  }
 }

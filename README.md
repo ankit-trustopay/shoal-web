@@ -92,10 +92,10 @@ Sets swarm `status` to `COMPLETED` and stores `reportData` in `resultData`.
 
 ## MiroFish contract (expected)
 
-**Outbound** `POST {MIROFISH_ENGINE_URL}/swarms/run`
+**Outbound** `POST {MIROFISH_ENGINE_URL}/ignite`
 
 ```json
-{ "swarmId": "...", "premise": "...", "agentCount": 200 }
+{ "swarmId": "...", "premise": "..." }
 ```
 
 **Inbound** `POST https://<your-app>/api/webhooks/engine`

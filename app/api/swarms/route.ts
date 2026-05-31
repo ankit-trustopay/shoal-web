@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
-import { dispatchSwarmToMirofish, MirofishEngineError } from "@/lib/mirofish";
+import { igniteEngine } from "@/lib/mirofish";
 import { prisma } from "@/lib/prisma";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
 
@@ -29,7 +29,7 @@ export async function OPTIONS(_request: Request) {
 
 /**
  * POST /api/swarms
- * Creates a swarm job, dispatches it to MiroFish, returns swarmId for Live Console redirect.
+ * Creates a swarm job, dispatches it to the Railway engine, returns swarmId for Live Console redirect.
  *
  * Body: { userId, premise, agentCount }
  */
@@ -78,48 +78,28 @@ export async function POST(request: Request) {
       },
     });
 
-    const engineUrl = process.env.MIROFISH_ENGINE_URL?.trim();
-
-    if (!engineUrl) {
-      console.log("Mocking MiroFish engine call");
-      await prisma.swarm.update({
-        where: { id: swarm.id },
-        data: { status: "RUNNING" },
-      });
-      return corsJsonResponse({ swarmId: swarm.id }, 201);
-    }
-
     try {
-      await dispatchSwarmToMirofish({
+      const engineResponse = await igniteEngine({
         swarmId: swarm.id,
-        premise: swarm.premise,
-        agentCount: swarm.agentCount,
+        premise,
       });
 
-      await prisma.swarm.update({
-        where: { id: swarm.id },
-        data: { status: "RUNNING" },
-      });
+      if (!engineResponse.ok) {
+        const errorBody = await engineResponse.text().catch(() => "");
+        console.error(
+          "[POST /api/swarms] Engine /ignite failed:",
+          engineResponse.status,
+          engineResponse.statusText,
+          errorBody,
+        );
+      } else {
+        await prisma.swarm.update({
+          where: { id: swarm.id },
+          data: { status: "RUNNING" },
+        });
+      }
     } catch (engineError) {
-      await prisma.swarm.update({
-        where: { id: swarm.id },
-        data: { status: "FAILED" },
-      });
-
-      const message =
-        engineError instanceof MirofishEngineError
-          ? engineError.message
-          : "Failed to reach MiroFish engine";
-
-      return corsJsonResponse(
-        {
-          error: message,
-          ...(process.env.NODE_ENV === "development"
-            ? { details: { swarmId: swarm.id } }
-            : {}),
-        },
-        502,
-      );
+      console.error("[POST /api/swarms] Engine /ignite error:", engineError);
     }
 
     return corsJsonResponse({ swarmId: swarm.id }, 201);
