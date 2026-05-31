@@ -24,19 +24,39 @@ model User {
 }
 
 model Swarm {
-  id         String      @id @default(cuid())
-  userId     String
-  premise    String
-  status     SwarmStatus @default(PENDING)
-  agentCount Int
-  resultData Json?
-  createdAt  DateTime    @default(now())
+  id           String      @id @default(cuid())
+  userId       String
+  premise      String
+  status       SwarmStatus @default(PENDING)
+  agentCount   Int
+  resultData   Json?
+  confidence   Int?
+  votesFor     Int?
+  votesAgainst Int?
+  votesNeutral Int?
+  runtime      Int?
+  cost         Float?
+  createdAt    DateTime    @default(now())
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages Message[]
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  evidence  Evidence[]
 
   @@index([userId])
   @@index([status])
+}
+
+model Evidence {
+  id      String @id @default(cuid())
+  swarmId String
+  title   String
+  source  String
+  url     String
+  snippet String
+
+  swarm Swarm @relation(fields: [swarmId], references: [id], onDelete: Cascade)
+
+  @@index([swarmId])
 }
 
 model Message {
