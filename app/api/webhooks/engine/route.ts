@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import { jsonError, jsonOk } from "@/lib/api-response";
+import { extractAgentProfiles } from "@/lib/engine-payload";
 import { prisma } from "@/lib/prisma";
 import { parseEngineWebhookBody } from "@/lib/swarm-validation";
 import { isWebhookAuthorized } from "@/lib/webhook-auth";
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { swarmId, reportData } = parsed.data;
+  const agentProfiles = extractAgentProfiles(body, reportData);
 
   try {
     const existing = await prisma.swarm.findUnique({
@@ -51,6 +53,7 @@ export async function POST(request: NextRequest) {
       data: {
         status: "COMPLETED",
         resultData: reportData as Prisma.InputJsonValue,
+        ...(agentProfiles !== undefined ? { agentProfiles } : {}),
       },
       select: { id: true, status: true },
     });

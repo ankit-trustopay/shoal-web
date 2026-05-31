@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
+import {
+  buildSwarmMetadataUpdate,
+  normalizeEvidenceItems,
+  type EngineIgnitePayload,
+} from "@/lib/engine-payload";
 import { igniteEngine } from "@/lib/mirofish";
 import { prisma } from "@/lib/prisma";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
@@ -11,93 +16,6 @@ const corsHeaders = {
 };
 
 const SEED_USER_ID = "test-user-001";
-
-type EngineEvidenceItem = {
-  title?: string;
-  source?: string;
-  url?: string;
-  snippet?: string;
-};
-
-type EngineIgnitePayload = {
-  messages?: { role: string; text: string }[];
-  response?: string;
-  confidence?: number;
-  votesFor?: number;
-  votesAgainst?: number;
-  votesNeutral?: number;
-  runtime?: number;
-  cost?: number;
-  evidence?: EngineEvidenceItem[];
-};
-
-function toOptionalInt(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-function toOptionalFloat(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number.parseFloat(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
-  const update: {
-    confidence?: number;
-    votesFor?: number;
-    votesAgainst?: number;
-    votesNeutral?: number;
-    runtime?: number;
-    cost?: number;
-  } = {};
-
-  const confidence = toOptionalInt(data.confidence);
-  const votesFor = toOptionalInt(data.votesFor);
-  const votesAgainst = toOptionalInt(data.votesAgainst);
-  const votesNeutral = toOptionalInt(data.votesNeutral);
-  const runtime = toOptionalInt(data.runtime);
-  const cost = toOptionalFloat(data.cost);
-
-  if (confidence !== undefined) update.confidence = confidence;
-  if (votesFor !== undefined) update.votesFor = votesFor;
-  if (votesAgainst !== undefined) update.votesAgainst = votesAgainst;
-  if (votesNeutral !== undefined) update.votesNeutral = votesNeutral;
-  if (runtime !== undefined) update.runtime = runtime;
-  if (cost !== undefined) update.cost = cost;
-
-  return update;
-}
-
-function normalizeEvidenceItems(
-  items: EngineEvidenceItem[] | undefined,
-): { title: string; source: string; url: string; snippet: string }[] {
-  if (!items?.length) return [];
-
-  return items
-    .map((item) => ({
-      title: item.title?.trim() ?? "",
-      source: item.source?.trim() ?? "",
-      url: item.url?.trim() ?? "",
-      snippet: item.snippet?.trim() ?? "",
-    }))
-    .filter(
-      (item) =>
-        item.title.length > 0 &&
-        item.source.length > 0 &&
-        item.url.length > 0 &&
-        item.snippet.length > 0,
-    );
-}
 
 function corsJsonResponse(body: unknown, status: number) {
   return NextResponse.json(body, { status, headers: corsHeaders });
