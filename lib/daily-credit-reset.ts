@@ -32,6 +32,7 @@ export async function applyDailyCreditResetIfNeeded(user: User): Promise<User> {
   };
 
   if (isFreePlan(user.plan)) {
+    // Strict overwrite — never add to balance; leftover credits expire at UTC midnight.
     data.credits = DEFAULT_FREE_CREDITS;
   }
 

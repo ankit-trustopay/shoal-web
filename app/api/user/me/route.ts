@@ -15,7 +15,9 @@ export async function OPTIONS() {
 
 /**
  * GET /api/user/me
- * Returns the authenticated user's account (with daily FREE credit reset applied).
+ * Returns the authenticated user's account. On each request, ensureClerkUser runs
+ * applyDailyCreditResetIfNeeded: on a new UTC calendar day, FREE users get credits
+ * set to exactly 50 (not stacked with any prior balance).
  */
 export async function GET() {
   const authResult = await requireAuthUserId();
