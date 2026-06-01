@@ -1,3 +1,4 @@
+import { Prisma } from "@/app/generated/prisma/client";
 import {
   buildSwarmMetadataUpdate,
   normalizeEvidenceItems,
