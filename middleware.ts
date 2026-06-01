@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { corsHeaderValues } from "@/lib/cors";
 
-const isPublicApiRoute = createRouteMatcher(["/api/webhooks/engine(.*)"]);
+/**
+ * Public API routes (no Clerk session). Engine webhooks use ENGINE_WEBHOOK_SECRET.
+ * Equivalent to legacy authMiddleware({ publicRoutes: [...] }).
+ */
+const publicRoutes = ["/api/webhooks/engine", "/api/webhooks(.*)"];
+
+const isPublicApiRoute = createRouteMatcher(publicRoutes);
 
 function withCors(response: NextResponse) {
   for (const [key, value] of Object.entries(corsHeaderValues)) {
@@ -23,14 +29,16 @@ export default clerkMiddleware(async (auth, request) => {
     });
   }
 
-  if (!isPublicApiRoute(request)) {
-    const { userId } = await auth();
+  if (isPublicApiRoute(request)) {
+    return withCors(NextResponse.next());
+  }
 
-    if (!userId) {
-      return withCors(
-        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      );
-    }
+  const { userId } = await auth();
+
+  if (!userId) {
+    return withCors(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    );
   }
 
   return withCors(NextResponse.next());

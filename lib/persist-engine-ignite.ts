@@ -104,7 +104,7 @@ export async function runEngineIgniteAndPersist(
         : {}),
       ...(model ? { model } : {}),
     },
-    { timeoutMs: 120_000 },
+    { timeoutMs: 30_000 },
   );
 
   if (!engineResponse.ok) {
@@ -122,7 +122,13 @@ export async function runEngineIgniteAndPersist(
     return;
   }
 
-  const engineData = (await engineResponse.json()) as EngineIgnitePayload;
+  const engineData = (await engineResponse.json()) as EngineIgnitePayload & {
+    status?: string;
+  };
+
+  if (engineData.status === "deliberating") {
+    return;
+  }
 
   if (!engineData.messages?.length && !engineData.response?.trim()) {
     console.error(
