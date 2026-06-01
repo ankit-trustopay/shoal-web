@@ -15,6 +15,7 @@ function looksLikeIgnitePayload(value: unknown): value is EngineIgnitePayload {
     typeof value.confidence === "number" ||
     Array.isArray(value.evidence) ||
     Array.isArray(value.agentProfiles) ||
+    Array.isArray(value.debateTranscript) ||
     typeof value.response === "string"
   );
 }

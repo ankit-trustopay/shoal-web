@@ -13,8 +13,16 @@ export type EngineRecommendedAction = {
   body?: string;
 };
 
+export type EngineDebateTranscriptEntry = {
+  agentName?: string;
+  role?: string;
+  text?: string;
+  timestamp?: string;
+};
+
 export type EngineIgnitePayload = {
   messages?: { role: string; text: string }[];
+  debateTranscript?: EngineDebateTranscriptEntry[];
   response?: string;
   confidence?: number;
   votesFor?: number;
@@ -148,6 +156,35 @@ export function toOptionalFloat(value: unknown): number | undefined {
   return undefined;
 }
 
+export function normalizeDebateTranscript(
+  items: EngineDebateTranscriptEntry[] | undefined,
+): Prisma.InputJsonValue | undefined {
+  if (!items?.length) return undefined;
+
+  const transcript = items
+    .map((item) => {
+      const agentName = trimString(item.agentName);
+      const role = trimString(item.role);
+      const text = trimString(item.text);
+      const timestamp = trimString(item.timestamp);
+      if (!agentName || !role || !text || !timestamp) return null;
+      return { agentName, role, text, timestamp };
+    })
+    .filter(
+      (
+        entry,
+      ): entry is {
+        agentName: string;
+        role: string;
+        text: string;
+        timestamp: string;
+      } => entry !== null,
+    );
+
+  if (!transcript.length) return undefined;
+  return transcript as Prisma.InputJsonValue;
+}
+
 function normalizeRecommendedActions(
   items: EngineRecommendedAction[] | undefined,
 ): Prisma.InputJsonValue | undefined {
@@ -190,6 +227,11 @@ export function buildResultData(
     payload.minorityDissent = minorityDissent;
   }
 
+  const debateTranscript = normalizeDebateTranscript(data.debateTranscript);
+  if (debateTranscript !== undefined) {
+    payload.debateTranscript = debateTranscript;
+  }
+
   if (Object.keys(payload).length === 0) return undefined;
   return payload as Prisma.InputJsonValue;
 }
@@ -203,6 +245,7 @@ export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
     runtime?: number;
     cost?: number;
     agentProfiles?: Prisma.InputJsonValue;
+    debateTranscript?: Prisma.InputJsonValue;
     resultData?: Prisma.InputJsonValue;
   } = {};
 
@@ -213,6 +256,7 @@ export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
   const runtime = toOptionalInt(data.runtime);
   const cost = toOptionalFloat(data.cost);
   const agentProfiles = normalizeAgentProfiles(data.agentProfiles);
+  const debateTranscript = normalizeDebateTranscript(data.debateTranscript);
 
   if (confidence !== undefined) update.confidence = confidence;
   if (votesFor !== undefined) update.votesFor = votesFor;
@@ -221,6 +265,7 @@ export function buildSwarmMetadataUpdate(data: EngineIgnitePayload) {
   if (runtime !== undefined) update.runtime = runtime;
   if (cost !== undefined) update.cost = cost;
   if (agentProfiles !== undefined) update.agentProfiles = agentProfiles;
+  if (debateTranscript !== undefined) update.debateTranscript = debateTranscript;
 
   const resultData = buildResultData(data);
   if (resultData !== undefined) update.resultData = resultData;

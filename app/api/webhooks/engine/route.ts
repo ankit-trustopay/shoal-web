@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import { jsonError, jsonOk } from "@/lib/api-response";
-import { extractAgentProfiles, type EngineIgnitePayload } from "@/lib/engine-payload";
+import {
+  buildSwarmMetadataUpdate,
+  extractAgentProfiles,
+  type EngineIgnitePayload,
+} from "@/lib/engine-payload";
 import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
 import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
 import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
@@ -25,7 +29,8 @@ function looksLikeIgnitePayload(value: unknown): boolean {
     Array.isArray(record.messages) ||
     typeof record.confidence === "number" ||
     Array.isArray(record.evidence) ||
-    Array.isArray(record.agentProfiles)
+    Array.isArray(record.agentProfiles) ||
+    Array.isArray(record.debateTranscript)
   );
 }
 
@@ -111,12 +116,16 @@ export async function POST(request: NextRequest) {
     }
 
     const agentProfiles = extractAgentProfiles(body, engineData);
+    const metadataUpdate = buildSwarmMetadataUpdate(
+      engineData as EngineIgnitePayload,
+    );
 
     const swarm = await prisma.swarm.update({
       where: { id: swarmId },
       data: {
         status: "COMPLETED",
         resultData: engineData as Prisma.InputJsonValue,
+        ...metadataUpdate,
         ...(agentProfiles !== undefined ? { agentProfiles } : {}),
       },
       select: { id: true, status: true },

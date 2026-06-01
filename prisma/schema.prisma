@@ -37,8 +37,9 @@ model Swarm {
   votesNeutral Int?
   runtime       Int?
   cost          Float?
-  agentProfiles Json?
-  createdAt     DateTime    @default(now())
+  agentProfiles     Json?
+  debateTranscript  Json?
+  createdAt         DateTime    @default(now())
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
