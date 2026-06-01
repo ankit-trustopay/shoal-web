@@ -40,7 +40,12 @@ function looksLikeIgnitePayload(value: unknown): boolean {
  */
 export async function POST(request: NextRequest) {
   if (!isWebhookAuthorized(request)) {
-    return jsonError("Unauthorized", 401);
+    return jsonError(
+      "Invalid or missing x-engine-webhook-secret",
+      401,
+      undefined,
+      request,
+    );
   }
 
   let body: unknown;

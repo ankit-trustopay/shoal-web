@@ -3,12 +3,21 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { corsHeaderValues } from "@/lib/cors";
 
 /**
- * Public API routes (no Clerk session). Engine webhooks use ENGINE_WEBHOOK_SECRET.
- * Equivalent to legacy authMiddleware({ publicRoutes: [...] }).
+ * @clerk/nextjs v7 — use createRouteMatcher (not legacy authMiddleware publicRoutes).
+ * Webhooks must never call auth() or auth.protect(); they use ENGINE_WEBHOOK_SECRET in the route.
  */
-const publicRoutes = ["/api/webhooks/engine", "/api/webhooks(.*)"];
+const isWebhookRoute = createRouteMatcher(["/api/webhooks(.*)"]);
 
-const isPublicApiRoute = createRouteMatcher(publicRoutes);
+/** Routes that require a signed-in Clerk user. Everything else under /api is public. */
+const isProtectedApiRoute = createRouteMatcher([
+  "/api/user(.*)",
+  "/api/swarms(.*)",
+]);
+
+function isWebhookPathname(pathname: string): boolean {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  return path === "/api/webhooks/engine" || path.startsWith("/api/webhooks/");
+}
 
 function withCors(response: NextResponse) {
   for (const [key, value] of Object.entries(corsHeaderValues)) {
@@ -18,7 +27,9 @@ function withCors(response: NextResponse) {
 }
 
 export default clerkMiddleware(async (auth, request) => {
-  if (!request.nextUrl.pathname.startsWith("/api/")) {
+  const { pathname } = request.nextUrl;
+
+  if (!pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
 
@@ -29,7 +40,12 @@ export default clerkMiddleware(async (auth, request) => {
     });
   }
 
-  if (isPublicApiRoute(request)) {
+  // Engine POST /api/webhooks/engine — bypass Clerk entirely (no auth(), no protect()).
+  if (isWebhookPathname(pathname) || isWebhookRoute(request)) {
+    return withCors(NextResponse.next());
+  }
+
+  if (!isProtectedApiRoute(request)) {
     return withCors(NextResponse.next());
   }
 
@@ -45,5 +61,6 @@ export default clerkMiddleware(async (auth, request) => {
 });
 
 export const config = {
-  matcher: "/api/:path*",
+  // Run Clerk on API routes except /api/webhooks/* (engine callbacks).
+  matcher: ["/api/((?!webhooks).*)"],
 };
