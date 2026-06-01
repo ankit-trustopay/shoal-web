@@ -17,11 +17,12 @@ enum SwarmStatus {
 }
 
 model User {
-  id      String  @id @default(cuid())
-  email   String  @unique
-  credits Int     @default(50)
-  plan    String  @default("FREE")
-  swarms  Swarm[]
+  id              String   @id @default(cuid())
+  email           String   @unique
+  credits         Int      @default(50)
+  plan            String   @default("FREE")
+  lastCreditReset DateTime @default(now())
+  swarms          Swarm[]
 }
 
 model Swarm {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { corsJsonResponse, requireAuthUserId } from "@/lib/api-auth";
+import { corsJsonResponse, internalErrorResponse, requireAuthUserId } from "@/lib/api-auth";
 import { ensureClerkUser } from "@/lib/ensure-clerk-user";
 import { corsHeaderValues } from "@/lib/cors";
 
@@ -15,7 +15,7 @@ export async function OPTIONS() {
 
 /**
  * GET /api/user/me
- * Returns the authenticated user's credit balance and plan from the database.
+ * Returns the authenticated user's account (with daily FREE credit reset applied).
  */
 export async function GET() {
   const authResult = await requireAuthUserId();
@@ -30,13 +30,15 @@ export async function GET() {
 
     return corsJsonResponse(
       {
+        id: user.id,
+        email: user.email,
         credits: user.credits,
         plan: user.plan,
+        lastCreditReset: user.lastCreditReset.toISOString(),
       },
       200,
     );
   } catch (error) {
-    console.error("[GET /api/user/me] Database error:", error);
-    return corsJsonResponse({ error: "Internal server error" }, 500);
+    return internalErrorResponse("[GET /api/user/me]", error);
   }
 }

@@ -16,6 +16,7 @@ const SEED_USER = {
   email: "founder@shoalai.com",
   credits: 50,
   plan: "FREE",
+  lastCreditReset: new Date(),
 } as const;
 
 async function main() {

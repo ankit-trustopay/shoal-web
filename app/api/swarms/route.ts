@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
-import { corsJsonResponse, requireAuthUserId } from "@/lib/api-auth";
+import {
+  corsJsonResponse,
+  internalErrorResponse,
+  requireAuthUserId,
+} from "@/lib/api-auth";
 import { computeSwarmCreditCost } from "@/lib/billing";
 import { ensureClerkUser } from "@/lib/ensure-clerk-user";
 import { runEngineIgniteAndPersist } from "@/lib/persist-engine-ignite";
@@ -23,6 +27,8 @@ export async function GET() {
   const { userId } = authResult;
 
   try {
+    await ensureClerkUser(userId);
+
     const swarms = await prisma.swarm.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -40,8 +46,7 @@ export async function GET() {
 
     return corsJsonResponse(swarms, 200);
   } catch (error) {
-    console.error("[GET /api/swarms] Database error:", error);
-    return corsJsonResponse({ error: "Internal server error" }, 500);
+    return internalErrorResponse("[GET /api/swarms]", error);
   }
 }
 
@@ -76,7 +81,10 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return corsJsonResponse({ error: "Invalid JSON body" }, 400);
+    return corsJsonResponse(
+      { error: "Invalid JSON body", message: "Request body must be valid JSON" },
+      400,
+    );
   }
 
   const parsed = parseCreateSwarmBody(body);
@@ -119,7 +127,7 @@ export async function POST(request: Request) {
 
     if (!swarm) {
       return corsJsonResponse(
-        { error: "Insufficient credits" },
+        { error: "Insufficient credits", message: `This swarm requires ${cost} credits` },
         402,
       );
     }
@@ -150,15 +158,16 @@ export async function POST(request: Request) {
 
     return corsJsonResponse({ swarmId: swarm.id }, 201);
   } catch (error) {
-    console.error("[POST /api/swarms] Database error:", error);
-
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      return corsJsonResponse({ error: "Invalid user" }, 400);
+      return corsJsonResponse(
+        { error: "Invalid user", message: "User record is missing or invalid" },
+        400,
+      );
     }
 
-    return corsJsonResponse({ error: "Internal server error" }, 500);
+    return internalErrorResponse("[POST /api/swarms]", error);
   }
 }

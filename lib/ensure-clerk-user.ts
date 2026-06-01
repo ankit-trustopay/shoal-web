@@ -1,28 +1,46 @@
 import { currentUser } from "@clerk/nextjs/server";
-import { DEFAULT_FREE_CREDITS, DEFAULT_USER_PLAN } from "@/lib/billing";
+import type { User } from "@/app/generated/prisma/client";
+import {
+  applyDailyCreditResetIfNeeded,
+  newUserDefaults,
+} from "@/lib/daily-credit-reset";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Ensure a Prisma User row exists for the authenticated Clerk user.
+ * Ensure a Prisma User row exists for the authenticated Clerk user and apply
+ * daily FREE-plan credit reset when the UTC calendar day has changed.
  */
-export async function ensureClerkUser(userId: string) {
+export async function ensureClerkUser(userId: string): Promise<User> {
   const existing = await prisma.user.findUnique({ where: { id: userId } });
+
   if (existing) {
-    return existing;
+    return applyDailyCreditResetIfNeeded(existing);
   }
 
-  const clerkUser = await currentUser();
-  const email =
-    clerkUser?.primaryEmailAddress?.emailAddress ??
-    clerkUser?.emailAddresses[0]?.emailAddress ??
-    `${userId}@clerk.local`;
+  let email = `${userId}@clerk.local`;
 
-  return prisma.user.create({
+  try {
+    const clerkUser = await currentUser();
+    email =
+      clerkUser?.primaryEmailAddress?.emailAddress ??
+      clerkUser?.emailAddresses[0]?.emailAddress ??
+      email;
+  } catch (error) {
+    console.warn(
+      "[ensureClerkUser] Clerk currentUser() failed; using fallback email:",
+      error,
+    );
+  }
+
+  const created = await prisma.user.create({
     data: {
       id: userId,
       email,
-      credits: DEFAULT_FREE_CREDITS,
-      plan: DEFAULT_USER_PLAN,
+      credits: newUserDefaults.credits,
+      plan: newUserDefaults.plan,
+      lastCreditReset: newUserDefaults.lastCreditReset,
     },
   });
+
+  return created;
 }

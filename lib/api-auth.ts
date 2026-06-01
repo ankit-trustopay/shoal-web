@@ -6,16 +6,42 @@ export function corsJsonResponse(body: unknown, status: number) {
   return NextResponse.json(body, { status, headers: corsHeaders() });
 }
 
+function internalErrorResponse(context: string, error: unknown) {
+  console.error(context, error);
+  const detail =
+    error instanceof Error ? error.message : "Unexpected server error";
+  return corsJsonResponse(
+    {
+      error: "Internal server error",
+      message:
+        process.env.NODE_ENV === "development" ? detail : "Something went wrong",
+    },
+    500,
+  );
+}
+
 export async function requireAuthUserId(): Promise<
   { userId: string } | { response: NextResponse }
 > {
-  const { userId } = await auth();
+  try {
+    const authState = await auth();
+    const userId = authState.userId;
 
-  if (!userId) {
+    if (!userId) {
+      return {
+        response: corsJsonResponse(
+          { error: "Unauthorized", message: "Valid Clerk session required" },
+          401,
+        ),
+      };
+    }
+
+    return { userId };
+  } catch (error) {
     return {
-      response: corsJsonResponse({ error: "Unauthorized" }, 401),
+      response: internalErrorResponse("[auth] Clerk validation failed:", error),
     };
   }
-
-  return { userId };
 }
+
+export { internalErrorResponse };
