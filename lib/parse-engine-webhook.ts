@@ -44,6 +44,10 @@ export function extractEngineIgnitePayload(
     return { swarmId, engineData: body.reportData as EngineIgnitePayload };
   }
 
+  if (looksLikeIgnitePayload(body.resultData)) {
+    return { swarmId, engineData: body.resultData as EngineIgnitePayload };
+  }
+
   if (body.reportData !== undefined && body.reportData !== null) {
     return {
       swarmId,
