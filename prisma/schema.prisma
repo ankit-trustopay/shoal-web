@@ -23,7 +23,7 @@ model User {
   dailyCredits    Int      @default(150)
   vaultCredits    Int      @default(0)
   plan            String   @default("FREE")
-  lastDailyReset  DateTime @default(now())
+  lastResetDate   DateTime @default(now()) @map("lastDailyReset")
   swarms          Swarm[]
 }
 

@@ -18,7 +18,7 @@ const SEED_USER = {
   dailyCredits: 150,
   vaultCredits: 0,
   plan: "FREE",
-  lastDailyReset: new Date(),
+  lastResetDate: new Date(),
 } as const;
 
 async function main() {

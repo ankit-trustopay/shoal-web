@@ -1,32 +1,11 @@
 import { currentUser } from "@clerk/nextjs/server";
 import type { User } from "@/app/generated/prisma/client";
 import { DEFAULT_FREE_DAILY_CREDITS, DEFAULT_USER_PLAN } from "@/lib/billing";
+import {
+  getMostRecent1230AMIST,
+  shouldResetDailyCreditsIST,
+} from "@/lib/ist-credit-reset";
 import { prisma } from "@/lib/prisma";
-
-/**
- * Most recent 12:30 AM UTC boundary at or before `now`.
- */
-export function getMostRecent1230AM(now: Date = new Date()): Date {
-  const todayAt1230 = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      30,
-      0,
-      0,
-    ),
-  );
-
-  if (now.getTime() >= todayAt1230.getTime()) {
-    return todayAt1230;
-  }
-
-  const yesterdayAt1230 = new Date(todayAt1230);
-  yesterdayAt1230.setUTCDate(yesterdayAt1230.getUTCDate() - 1);
-  return yesterdayAt1230;
-}
 
 async function resolveUserEmail(clerkUserId: string): Promise<string> {
   let userEmail = `${clerkUserId}@clerk.local`;
@@ -52,17 +31,19 @@ function dailyCreditsNeedsPatch(value: number | null | undefined): boolean {
 }
 
 /**
- * Bulletproof wallet upsert for Clerk users.
- * - upsert on clerkId
- * - create with 150 daily credits
- * - 12:30 AM UTC reset when lastDailyReset is before the latest boundary
- * - patch null/missing dailyCredits to 150
+ * Wallet upsert + 12:30 AM IST daily credit reset on every profile fetch.
  */
 export async function resolveUserWallet(userId: string): Promise<User> {
   const now = new Date();
   const userEmail = await resolveUserEmail(userId);
+  const istBoundary = getMostRecent1230AMIST(now);
 
-  // Legacy rows created before clerkId existed (id was the Clerk user id).
+  console.log("[resolveUserWallet] start", {
+    userId,
+    now: now.toISOString(),
+    istBoundary: istBoundary.toISOString(),
+  });
+
   const legacy = await prisma.user.findFirst({
     where: {
       OR: [{ clerkId: userId }, { id: userId }],
@@ -81,29 +62,35 @@ export async function resolveUserWallet(userId: string): Promise<User> {
     update: {},
     create: {
       clerkId: userId,
-      // Keep id = Clerk user id so existing Swarm.userId FK rows keep working.
       id: userId,
       email: userEmail,
       dailyCredits: DEFAULT_FREE_DAILY_CREDITS,
       vaultCredits: 0,
-      lastDailyReset: now,
+      lastResetDate: now,
       plan: DEFAULT_USER_PLAN,
     },
   });
 
-  console.log("User fetched/created:", user);
+  if (shouldResetDailyCreditsIST(user.lastResetDate, now)) {
+    console.log("[resolveUserWallet] applying IST 12:30 AM reset", {
+      userId,
+      previousReset: user.lastResetDate.toISOString(),
+      dailyCreditsBefore: user.dailyCredits,
+    });
 
-  const mostRecent1230AM = getMostRecent1230AM(now);
-
-  if (user.lastDailyReset < mostRecent1230AM) {
     user = await prisma.user.update({
       where: { clerkId: userId },
       data: {
         dailyCredits: DEFAULT_FREE_DAILY_CREDITS,
-        lastDailyReset: now,
+        lastResetDate: now,
       },
     });
-    console.log("User fetched/created:", user);
+
+    console.log("[resolveUserWallet] reset complete", {
+      userId,
+      dailyCredits: user.dailyCredits,
+      lastResetDate: user.lastResetDate.toISOString(),
+    });
   }
 
   if (dailyCreditsNeedsPatch(user.dailyCredits)) {
@@ -113,7 +100,6 @@ export async function resolveUserWallet(userId: string): Promise<User> {
         dailyCredits: DEFAULT_FREE_DAILY_CREDITS,
       },
     });
-    console.log("User fetched/created:", user);
   }
 
   return user;
@@ -127,6 +113,8 @@ export function serializeUserWallet(user: User) {
     dailyCredits: user.dailyCredits,
     vaultCredits: user.vaultCredits,
     plan: user.plan,
-    lastDailyReset: user.lastDailyReset.toISOString(),
+    lastResetDate: user.lastResetDate.toISOString(),
+    // Legacy alias for older clients
+    lastDailyReset: user.lastResetDate.toISOString(),
   };
 }

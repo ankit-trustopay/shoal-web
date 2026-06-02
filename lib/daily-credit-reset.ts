@@ -26,13 +26,13 @@ export function isNewUtcCalendarDay(
  * All users advance lastDailyReset so the check runs once per day.
  */
 export async function applyDailyCreditResetIfNeeded(user: User): Promise<User> {
-  if (!isNewUtcCalendarDay(user.lastDailyReset)) {
+  if (!isNewUtcCalendarDay(user.lastResetDate)) {
     return user;
   }
 
   const now = new Date();
-  const data: { lastDailyReset: Date; dailyCredits?: number } = {
-    lastDailyReset: now,
+  const data: { lastResetDate: Date; dailyCredits?: number } = {
+    lastResetDate: now,
   };
 
   if (isFreePlan(user.plan)) {
@@ -50,5 +50,5 @@ export const newUserDefaults = {
   dailyCredits: DEFAULT_FREE_DAILY_CREDITS,
   vaultCredits: 0,
   plan: DEFAULT_USER_PLAN,
-  lastDailyReset: new Date(),
+  lastResetDate: new Date(),
 } as const;
