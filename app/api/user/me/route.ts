@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { corsJsonResponse, internalErrorResponse, requireAuthUserId } from "@/lib/api-auth";
-import { ensureClerkUser } from "@/lib/ensure-clerk-user";
 import { corsHeaderValues } from "@/lib/cors";
+import { resolveUserWallet, serializeUserWallet } from "@/lib/resolve-user-wallet";
 
 /**
  * OPTIONS /api/user/me
@@ -15,9 +15,7 @@ export async function OPTIONS() {
 
 /**
  * GET /api/user/me
- * Returns the authenticated user's account. On each request, ensureClerkUser runs
- * applyDailyCreditResetIfNeeded: on a new UTC calendar day, FREE users get dailyCredits
- * set to exactly 150 (not stacked) while vaultCredits are preserved.
+ * Same wallet upsert + 12:30 AM reset logic as GET /api/users/:id (used by the UI).
  */
 export async function GET() {
   const authResult = await requireAuthUserId();
@@ -28,19 +26,9 @@ export async function GET() {
   const { userId } = authResult;
 
   try {
-    const user = await ensureClerkUser(userId);
+    const user = await resolveUserWallet(userId);
 
-    return corsJsonResponse(
-      {
-        id: user.id,
-        email: user.email,
-        dailyCredits: user.dailyCredits,
-        vaultCredits: user.vaultCredits,
-        plan: user.plan,
-        lastDailyReset: user.lastDailyReset.toISOString(),
-      },
-      200,
-    );
+    return corsJsonResponse(serializeUserWallet(user), 200);
   } catch (error) {
     return internalErrorResponse("[GET /api/user/me]", error);
   }
