@@ -22,6 +22,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     }
 
     const user = await resolveUserWallet(userId);
+    console.log("User fetched/created:", user);
 
     return corsJsonResponse(serializeUserWallet(user), 200);
   } catch (error) {

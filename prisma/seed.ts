@@ -13,6 +13,7 @@ const prisma = new PrismaClient({ adapter });
 
 const SEED_USER = {
   id: "test-user-001",
+  clerkId: "test-user-001",
   email: "founder@shoalai.com",
   dailyCredits: 150,
   vaultCredits: 0,
@@ -22,7 +23,7 @@ const SEED_USER = {
 
 async function main() {
   const user = await prisma.user.upsert({
-    where: { id: SEED_USER.id },
+    where: { clerkId: SEED_USER.clerkId },
     create: SEED_USER,
     update: {
       email: SEED_USER.email,

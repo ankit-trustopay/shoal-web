@@ -27,6 +27,7 @@ export async function GET() {
 
   try {
     const user = await resolveUserWallet(userId);
+    console.log("User fetched/created:", user);
 
     return corsJsonResponse(serializeUserWallet(user), 200);
   } catch (error) {

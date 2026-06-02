@@ -18,6 +18,7 @@ enum SwarmStatus {
 
 model User {
   id              String   @id @default(cuid())
+  clerkId         String   @unique
   email           String   @unique
   dailyCredits    Int      @default(150)
   vaultCredits    Int      @default(0)
