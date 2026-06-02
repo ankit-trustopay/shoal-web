@@ -11,6 +11,7 @@ const isWebhookRoute = createRouteMatcher(["/api/webhooks(.*)"]);
 /** Routes that require a signed-in Clerk user. Everything else under /api is public. */
 const isProtectedApiRoute = createRouteMatcher([
   "/api/user(.*)",
+  "/api/users(.*)",
   "/api/swarms(.*)",
   "/api/debates(.*)",
 ]);
