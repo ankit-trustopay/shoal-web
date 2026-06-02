@@ -90,6 +90,57 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Compatibility: engine may send a compact completion payload for debates.
+  // Expected:
+  // { debate_id, status: "completed", verdict, agents, confidence }
+  if (isRecord(body) && isNonEmptyString(body.debate_id)) {
+    const debateId = body.debate_id.trim();
+    const status =
+      typeof body.status === "string" ? body.status.trim().toLowerCase() : "";
+    if (status === "completed") {
+      const verdict =
+        typeof body.verdict === "string" ? body.verdict.trim() : "";
+      const confidence =
+        typeof body.confidence === "number" && Number.isFinite(body.confidence)
+          ? Math.max(0, Math.min(100, Math.trunc(body.confidence)))
+          : null;
+      const agents = Array.isArray(body.agents) ? body.agents : null;
+
+      try {
+        const existing = await prisma.swarm.findUnique({
+          where: { id: debateId },
+          select: { id: true },
+        });
+
+        if (!existing) {
+          return jsonError("Swarm not found", 404);
+        }
+
+        await prisma.swarm.update({
+          where: { id: debateId },
+          data: {
+            status: "COMPLETED",
+            ...(confidence !== null ? { confidence } : {}),
+            ...(agents !== null
+              ? { agentProfiles: agents as Prisma.InputJsonValue }
+              : {}),
+            resultData: {
+              verdict,
+              confidence,
+              agents,
+            } as Prisma.InputJsonValue,
+          },
+          select: { id: true },
+        });
+
+        return jsonOk({ debateId, status: "completed", persisted: true });
+      } catch (error) {
+        console.error("[POST /api/webhooks/engine] debate completion:", error);
+        return jsonError("Internal server error", 500);
+      }
+    }
+  }
+
   const parsed = extractEngineIgnitePayload(body);
   if ("error" in parsed) {
     return jsonError(parsed.error, 400);

@@ -12,6 +12,7 @@ const isWebhookRoute = createRouteMatcher(["/api/webhooks(.*)"]);
 const isProtectedApiRoute = createRouteMatcher([
   "/api/user(.*)",
   "/api/swarms(.*)",
+  "/api/debates(.*)",
 ]);
 
 function isWebhookPathname(pathname: string): boolean {

@@ -8,6 +8,10 @@ export interface IgniteEnginePayload {
   swarmSize?: number;
   agentCount?: number;
   model?: string;
+  model_tier?: string;
+  target_audience?: string;
+  price_point?: string;
+  marketing_budget?: string;
 }
 
 export async function igniteEngine(

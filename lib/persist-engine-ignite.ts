@@ -89,6 +89,12 @@ export async function runEngineIgniteAndPersist(
   premise: string,
   agentCount?: number,
   model?: string,
+  variables?: {
+    modelTier?: string;
+    targetAudience?: string;
+    pricePoint?: string;
+    marketingBudget?: string;
+  },
 ): Promise<void> {
   await prisma.swarm.update({
     where: { id: swarmId },
@@ -103,6 +109,14 @@ export async function runEngineIgniteAndPersist(
         ? { swarmSize: agentCount, agentCount }
         : {}),
       ...(model ? { model } : {}),
+      ...(variables?.modelTier ? { model_tier: variables.modelTier } : {}),
+      ...(variables?.targetAudience
+        ? { target_audience: variables.targetAudience }
+        : {}),
+      ...(variables?.pricePoint ? { price_point: variables.pricePoint } : {}),
+      ...(variables?.marketingBudget
+        ? { marketing_budget: variables.marketingBudget }
+        : {}),
     },
     { timeoutMs: 30_000 },
   );
