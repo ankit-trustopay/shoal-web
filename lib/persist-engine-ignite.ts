@@ -169,9 +169,10 @@ export async function runEngineDebateAndPersist(
   agentCount: number,
   modelMix: number,
 ): Promise<void> {
-  await prisma.swarm.update({
-    where: { id: debateId },
-    data: { status: "RUNNING" },
+  console.log("[runEngineDebateAndPersist] calling engine", {
+    debateId,
+    agentCount,
+    modelMix,
   });
 
   const response = await startDebateEngine(
@@ -206,6 +207,22 @@ export async function runEngineDebateAndPersist(
   }
 
   if (parsed?.status === "deliberating") {
+    const { chargeDebateCreditsOnEngineStart } = await import(
+      "@/lib/charge-debate-credits"
+    );
+    const charge = await chargeDebateCreditsOnEngineStart(debateId);
+    console.log("[runEngineDebateAndPersist] engine accepted", {
+      debateId,
+      charged: charge.charged,
+      cost: charge.cost,
+    });
+
+    await prisma.swarm.update({
+      where: { id: debateId },
+      data: { status: "RUNNING" },
+    });
     return;
   }
+
+  throw new Error("Engine did not return deliberating status");
 }

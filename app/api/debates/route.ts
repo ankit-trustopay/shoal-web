@@ -13,6 +13,8 @@ import { prisma } from "@/lib/prisma";
 import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { Prisma } from "@/app/generated/prisma/client";
 
+// Credits are charged in runEngineDebateAndPersist after the engine accepts the job.
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -99,24 +101,6 @@ function canAffordWallet(wallet: WalletSnapshot, cost: number): boolean {
   return wallet.dailyCredits + wallet.vaultCredits >= cost;
 }
 
-function deductFromWallet(
-  wallet: WalletSnapshot,
-  cost: number,
-): { dailyCredits: number; vaultCredits: number } {
-  if (cost <= 0) return wallet;
-  if (wallet.dailyCredits >= cost) {
-    return {
-      dailyCredits: wallet.dailyCredits - cost,
-      vaultCredits: wallet.vaultCredits,
-    };
-  }
-  const remainder = cost - wallet.dailyCredits;
-  return {
-    dailyCredits: 0,
-    vaultCredits: Math.max(0, wallet.vaultCredits - remainder),
-  };
-}
-
 /**
  * POST /api/debates
  * Creates a debate (swarm) and returns debateId immediately.
@@ -174,7 +158,15 @@ export async function POST(request: Request) {
     return corsJsonResponse({ error: "agentCount must be an integer 1..10000" }, 400);
   }
 
-  const cost = computeSwarmCreditCost(agentCount) * creditsPerAgent;
+  const plannedCost = computeSwarmCreditCost(agentCount) * creditsPerAgent;
+
+  console.log("[POST /api/debates] create", {
+    userId,
+    agentCount,
+    plannedCost,
+    modelTier,
+    modelMix,
+  });
 
   const targetAudience =
     typeof advanced.targetAudience === "string" ? advanced.targetAudience : null;
@@ -186,68 +178,47 @@ export async function POST(request: Request) {
   try {
     await ensureClerkUser(userId);
 
-    const swarm = await prisma.$transaction(async (tx) => {
-      // Two-wallet deduction (daily then vault) with optimistic concurrency.
-      let attempt = 0;
-      let debited = false;
-
-      while (attempt < 2 && !debited) {
-        attempt += 1;
-        const wallet = await tx.user.findUnique({
-          where: { id: userId },
-          select: { dailyCredits: true, vaultCredits: true },
-        });
-
-        if (!wallet) return null;
-        if (!canAffordWallet(wallet, cost)) return null;
-
-        const nextWallet = deductFromWallet(wallet, cost);
-        const updated = await tx.user.updateMany({
-          where: {
-            id: userId,
-            dailyCredits: wallet.dailyCredits,
-            vaultCredits: wallet.vaultCredits,
-          },
-          data: {
-            dailyCredits: nextWallet.dailyCredits,
-            vaultCredits: nextWallet.vaultCredits,
-          },
-        });
-        debited = updated.count === 1;
-      }
-
-      if (!debited) return null;
-
-      return tx.swarm.create({
-        data: {
-          userId,
-          premise: query.trim(),
-          agentCount,
-          cost,
-          status: "RUNNING",
-          resultData: {
-            modelTier,
-            modelMix,
-            advancedVariables: {
-              targetAudience,
-              pricePoint,
-              marketingBudget,
-            },
-          } as Prisma.InputJsonValue,
-        },
-        select: { id: true },
-      });
+    const wallet = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { dailyCredits: true, vaultCredits: true },
     });
 
-    if (!swarm) {
+    if (!wallet || !canAffordWallet(wallet, plannedCost)) {
       return corsJsonResponse(
         {
           error: "Insufficient credits",
-          message: `This debate requires ${cost} credits`,
+          message: `This debate requires ${plannedCost} credits`,
         },
         402,
       );
     }
+
+    const swarm = await prisma.swarm.create({
+      data: {
+        userId,
+        premise: query.trim(),
+        agentCount,
+        cost: 0,
+        status: "PENDING",
+        resultData: {
+          modelTier,
+          modelMix,
+          plannedCost,
+          creditsCharged: false,
+          advancedVariables: {
+            targetAudience,
+            pricePoint,
+            marketingBudget,
+          },
+        } as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+
+    console.log("[POST /api/debates] created PENDING", {
+      debateId: swarm.id,
+      plannedCost,
+    });
 
     after(async () => {
       try {
@@ -275,7 +246,7 @@ export async function POST(request: Request) {
       }
     });
 
-    return corsJsonResponse({ debateId: swarm.id }, 201);
+    return corsJsonResponse({ debateId: swarm.id, status: "pending" }, 201);
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

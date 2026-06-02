@@ -1,8 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-response";
-import {
-  extractEngineIgnitePayload,
-} from "@/lib/parse-engine-webhook";
+import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
 import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
 import {
   parseDebateEnginePayload,
@@ -25,7 +23,10 @@ function isNonEmptyString(value: unknown): value is string {
  * Engine callbacks: debate completion, ignite completion, or failure.
  */
 export async function POST(request: NextRequest) {
+  console.log("[webhook/engine] POST received");
+
   if (!isWebhookAuthorized(request)) {
+    console.warn("[webhook/engine] unauthorized");
     return jsonError(
       "Invalid or missing x-engine-webhook-secret",
       401,
@@ -39,12 +40,27 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
+    console.error("[webhook/engine] invalid JSON");
     return jsonError("Invalid JSON body", 400);
   }
 
   if (!isRecord(body)) {
     return jsonError("Body must be a JSON object", 400);
   }
+
+  const traceId =
+    (isNonEmptyString(body.debate_id) && body.debate_id) ||
+    (isNonEmptyString(body.debateId) && body.debateId) ||
+    (isNonEmptyString(body.swarmId) && body.swarmId) ||
+    "unknown";
+
+  console.log("[webhook/engine] payload", {
+    traceId,
+    status: body.status,
+    hasVerdict: typeof body.verdict === "string",
+    verdictLen:
+      typeof body.verdict === "string" ? body.verdict.trim().length : 0,
+  });
 
   // --- Engine failure (refund path) ---
   if (body.status === "FAILED") {
@@ -61,6 +77,8 @@ export async function POST(request: NextRequest) {
       typeof body.error === "string" && body.error.trim().length > 0
         ? body.error.trim()
         : "Engine deliberation failed";
+
+    console.log("[webhook/engine] FAILED", { swarmId, errorMessage });
 
     try {
       const result = await markSwarmFailedAndRefund(swarmId, errorMessage);
@@ -80,7 +98,7 @@ export async function POST(request: NextRequest) {
         alreadyRefunded: result.alreadyRefunded,
       });
     } catch (error) {
-      console.error("[POST /api/webhooks/engine] FAILED:", error);
+      console.error("[webhook/engine] FAILED handler:", error);
       return jsonError("Internal server error", 500);
     }
   }
@@ -91,12 +109,19 @@ export async function POST(request: NextRequest) {
     try {
       const exists = await prisma.swarm.findUnique({
         where: { id: debateParsed.data.debateId },
-        select: { id: true },
+        select: { id: true, status: true },
       });
 
       if (!exists) {
+        console.error("[webhook/engine] debate not found", debateParsed.data.debateId);
         return jsonError("Debate not found", 404);
       }
+
+      console.log("[webhook/engine] persisting debate", {
+        debateId: debateParsed.data.debateId,
+        verdictLen: debateParsed.data.verdict.length,
+        priorStatus: exists.status,
+      });
 
       await persistDebateEngineResult(debateParsed.data);
 
@@ -106,7 +131,7 @@ export async function POST(request: NextRequest) {
         persisted: true,
       });
     } catch (error) {
-      console.error("[POST /api/webhooks/engine] debate persist:", error);
+      console.error("[webhook/engine] debate persist:", error);
       return jsonError("Internal server error", 500);
     }
   }
@@ -114,12 +139,14 @@ export async function POST(request: NextRequest) {
   const hasDebateId =
     isNonEmptyString(body.debate_id) || isNonEmptyString(body.debateId);
   if (hasDebateId) {
+    console.error("[webhook/engine] debate parse error", debateParsed.error);
     return jsonError(debateParsed.error, 400);
   }
 
   // --- Legacy ignite / swarm completion ---
   const parsed = extractEngineIgnitePayload(body);
   if ("error" in parsed) {
+    console.error("[webhook/engine] ignite parse error", parsed.error);
     return jsonError(parsed.error, 400);
   }
 
@@ -135,17 +162,15 @@ export async function POST(request: NextRequest) {
       return jsonError("Swarm not found", 404);
     }
 
-    if (
-      existing.status === "COMPLETED" &&
-      existing.messages.length > 0
-    ) {
+    if (existing.status === "COMPLETED" && existing.messages.length > 0) {
       return jsonOk({ swarmId, status: "COMPLETED", duplicate: true });
     }
 
+    console.log("[webhook/engine] persisting ignite", { swarmId });
     await persistEngineIgniteResult(swarmId, engineData);
     return jsonOk({ swarmId, status: "COMPLETED", persisted: true });
   } catch (error) {
-    console.error("[POST /api/webhooks/engine] ignite persist:", error);
+    console.error("[webhook/engine] ignite persist:", error);
     return jsonError("Internal server error", 500);
   }
 }

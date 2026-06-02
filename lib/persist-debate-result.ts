@@ -1,4 +1,5 @@
 import { Prisma } from "@/app/generated/prisma/client";
+import { AI_MODEL_ERROR_VERDICT } from "@/lib/debate-constants";
 import { prisma } from "@/lib/prisma";
 
 export type DebateEngineAgent = {
@@ -18,6 +19,15 @@ export type DebateEnginePayload = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function sanitizeVerdict(verdict: string): string {
+  const trimmed = verdict.trim();
+  if (!trimmed) {
+    console.warn("[persist-debate-result] empty verdict -> AI_MODEL_ERROR_VERDICT");
+    return AI_MODEL_ERROR_VERDICT;
+  }
+  return trimmed;
 }
 
 export function parseDebateEnginePayload(
@@ -40,48 +50,74 @@ export function parseDebateEnginePayload(
 
   const status =
     typeof body.status === "string" ? body.status.trim().toLowerCase() : "";
-  if (status && status !== "completed") {
+
+  if (
+    status &&
+    status !== "completed" &&
+    status !== "failed" &&
+    status !== "failure"
+  ) {
     return { ok: false, error: `Unsupported status: ${status}` };
   }
 
-  const verdict =
-    typeof body.verdict === "string" ? body.verdict.trim() : "";
-  if (!verdict) {
-    return { ok: false, error: "verdict is required" };
+  if (status === "failed" || status === "failure") {
+    return {
+      ok: true,
+      data: {
+        debateId,
+        verdict: AI_MODEL_ERROR_VERDICT,
+        confidence: 0,
+        agents: [
+          {
+            name: "CEO Synthesizer",
+            position: AI_MODEL_ERROR_VERDICT,
+          },
+        ],
+        runtime: 1,
+        cost: 0,
+        agentCount: 1,
+      },
+    };
   }
+
+  const rawVerdict =
+    typeof body.verdict === "string" ? body.verdict : "";
+  const verdict = sanitizeVerdict(rawVerdict);
 
   const confidenceRaw = body.confidence;
-  if (
-    typeof confidenceRaw !== "number" ||
-    !Number.isFinite(confidenceRaw)
-  ) {
-    return { ok: false, error: "confidence must be a finite number" };
-  }
-  const confidence = Math.max(0, Math.min(100, Math.trunc(confidenceRaw)));
+  const confidence =
+    typeof confidenceRaw === "number" && Number.isFinite(confidenceRaw)
+      ? Math.max(0, Math.min(100, Math.trunc(confidenceRaw)))
+      : 0;
 
-  if (!Array.isArray(body.agents) || body.agents.length === 0) {
-    return { ok: false, error: "agents must be a non-empty array" };
-  }
-
-  const agents: DebateEngineAgent[] = [];
-  for (const item of body.agents) {
-    if (!isRecord(item)) {
-      return { ok: false, error: "Each agent must be an object" };
+  let agents: DebateEngineAgent[] = [];
+  if (Array.isArray(body.agents) && body.agents.length > 0) {
+    for (const item of body.agents) {
+      if (!isRecord(item)) {
+        return { ok: false, error: "Each agent must be an object" };
+      }
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      const position =
+        typeof item.position === "string"
+          ? item.position.trim()
+          : typeof item.stance === "string"
+            ? item.stance.trim()
+            : "";
+      if (!name) {
+        return { ok: false, error: "Each agent requires a name" };
+      }
+      agents.push({
+        name,
+        position: position || "No position recorded.",
+      });
     }
-    const name = typeof item.name === "string" ? item.name.trim() : "";
-    const position =
-      typeof item.position === "string"
-        ? item.position.trim()
-        : typeof item.stance === "string"
-          ? item.stance.trim()
-          : "";
-    if (!name) {
-      return { ok: false, error: "Each agent requires a name" };
-    }
-    agents.push({
-      name,
-      position: position || "No position recorded.",
-    });
+  } else {
+    agents = [
+      {
+        name: "CEO Synthesizer",
+        position: verdict.slice(0, 500),
+      },
+    ];
   }
 
   const runtime =
@@ -119,15 +155,20 @@ export function parseDebateEnginePayload(
 export async function persistDebateEngineResult(
   payload: DebateEnginePayload,
 ): Promise<void> {
-  const {
+  const debateId = payload.debateId;
+  const verdict = sanitizeVerdict(payload.verdict);
+  const confidence = payload.confidence;
+  const agents = payload.agents.length
+    ? payload.agents
+    : [{ name: "CEO Synthesizer", position: verdict.slice(0, 500) }];
+  const { runtime, cost, agentCount } = payload;
+
+  console.log("[persistDebateEngineResult] start", {
     debateId,
-    verdict,
+    verdictLen: verdict.length,
     confidence,
-    agents,
-    runtime,
-    cost,
-    agentCount,
-  } = payload;
+    agentCount: agents.length,
+  });
 
   const existing = await prisma.swarm.findUnique({
     where: { id: debateId },
@@ -192,4 +233,6 @@ export async function persistDebateEngineResult(
       },
     });
   });
+
+  console.log("[persistDebateEngineResult] done", { debateId, status: "COMPLETED" });
 }

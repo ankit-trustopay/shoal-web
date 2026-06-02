@@ -60,7 +60,32 @@ export async function markSwarmFailedAndRefund(
     }
 
     const existingResult = isRecord(swarm.resultData) ? swarm.resultData : {};
+    const creditsCharged = existingResult.creditsCharged === true;
     const alreadyRefunded = existingResult.creditsRefunded === true;
+
+    if (!creditsCharged) {
+      await tx.swarm.update({
+        where: { id: swarmId },
+        data: {
+          status: "FAILED",
+          resultData: {
+            ...existingResult,
+            error: errorMessage,
+            failedAt: new Date().toISOString(),
+            creditsRefunded: false,
+            refundCredits: 0,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      console.log("[markSwarmFailedAndRefund] no charge applied", { swarmId });
+      return {
+        ok: true,
+        swarmId,
+        userId: swarm.userId,
+        refundedCredits: 0,
+        alreadyRefunded: false,
+      };
+    }
 
     if (swarm.status === "FAILED" && alreadyRefunded) {
       return {
