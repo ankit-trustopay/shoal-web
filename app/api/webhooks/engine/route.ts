@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
-import { Prisma } from "@/app/generated/prisma/client";
 import { jsonError, jsonOk } from "@/lib/api-response";
 import {
-  buildSwarmMetadataUpdate,
-  extractAgentProfiles,
-  type EngineIgnitePayload,
-} from "@/lib/engine-payload";
-import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
+  extractEngineIgnitePayload,
+} from "@/lib/parse-engine-webhook";
 import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
+import {
+  parseDebateEnginePayload,
+  persistDebateEngineResult,
+} from "@/lib/persist-debate-result";
 import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { prisma } from "@/lib/prisma";
 import { isWebhookAuthorized } from "@/lib/webhook-auth";
@@ -20,23 +20,9 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function looksLikeIgnitePayload(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    Array.isArray(record.messages) ||
-    typeof record.confidence === "number" ||
-    Array.isArray(record.evidence) ||
-    Array.isArray(record.agentProfiles) ||
-    Array.isArray(record.debateTranscript)
-  );
-}
-
 /**
  * POST /api/webhooks/engine
- * Callback when a simulation completes or fails.
+ * Engine callbacks: debate completion, ignite completion, or failure.
  */
 export async function POST(request: NextRequest) {
   if (!isWebhookAuthorized(request)) {
@@ -56,16 +42,25 @@ export async function POST(request: NextRequest) {
     return jsonError("Invalid JSON body", 400);
   }
 
-  if (isRecord(body) && body.status === "FAILED") {
-    if (!isNonEmptyString(body.swarmId)) {
-      return jsonError("swarmId is required", 400);
+  if (!isRecord(body)) {
+    return jsonError("Body must be a JSON object", 400);
+  }
+
+  // --- Engine failure (refund path) ---
+  if (body.status === "FAILED") {
+    const swarmId =
+      (isNonEmptyString(body.swarmId) && body.swarmId.trim()) ||
+      (isNonEmptyString(body.debate_id) && body.debate_id.trim()) ||
+      "";
+
+    if (!swarmId) {
+      return jsonError("swarmId or debate_id is required for FAILED", 400);
     }
 
-    const swarmId = body.swarmId.trim();
     const errorMessage =
       typeof body.error === "string" && body.error.trim().length > 0
         ? body.error.trim()
-        : "Engine ignite failed";
+        : "Engine deliberation failed";
 
     try {
       const result = await markSwarmFailedAndRefund(swarmId, errorMessage);
@@ -85,62 +80,44 @@ export async function POST(request: NextRequest) {
         alreadyRefunded: result.alreadyRefunded,
       });
     } catch (error) {
-      console.error("[POST /api/webhooks/engine] FAILED handler:", error);
+      console.error("[POST /api/webhooks/engine] FAILED:", error);
       return jsonError("Internal server error", 500);
     }
   }
 
-  // Compatibility: engine may send a compact completion payload for debates.
-  // Expected:
-  // { debate_id, status: "completed", verdict, agents, confidence }
-  if (isRecord(body) && isNonEmptyString(body.debate_id)) {
-    const debateId = body.debate_id.trim();
-    const status =
-      typeof body.status === "string" ? body.status.trim().toLowerCase() : "";
-    if (status === "completed") {
-      const verdict =
-        typeof body.verdict === "string" ? body.verdict.trim() : "";
-      const confidence =
-        typeof body.confidence === "number" && Number.isFinite(body.confidence)
-          ? Math.max(0, Math.min(100, Math.trunc(body.confidence)))
-          : null;
-      const agents = Array.isArray(body.agents) ? body.agents : null;
+  // --- Canonical debate completion from Python ---
+  const debateParsed = parseDebateEnginePayload(body);
+  if (debateParsed.ok) {
+    try {
+      const exists = await prisma.swarm.findUnique({
+        where: { id: debateParsed.data.debateId },
+        select: { id: true },
+      });
 
-      try {
-        const existing = await prisma.swarm.findUnique({
-          where: { id: debateId },
-          select: { id: true },
-        });
-
-        if (!existing) {
-          return jsonError("Swarm not found", 404);
-        }
-
-        await prisma.swarm.update({
-          where: { id: debateId },
-          data: {
-            status: "COMPLETED",
-            ...(confidence !== null ? { confidence } : {}),
-            ...(agents !== null
-              ? { agentProfiles: agents as Prisma.InputJsonValue }
-              : {}),
-            resultData: {
-              verdict,
-              confidence,
-              agents,
-            } as Prisma.InputJsonValue,
-          },
-          select: { id: true },
-        });
-
-        return jsonOk({ debateId, status: "completed", persisted: true });
-      } catch (error) {
-        console.error("[POST /api/webhooks/engine] debate completion:", error);
-        return jsonError("Internal server error", 500);
+      if (!exists) {
+        return jsonError("Debate not found", 404);
       }
+
+      await persistDebateEngineResult(debateParsed.data);
+
+      return jsonOk({
+        debateId: debateParsed.data.debateId,
+        status: "completed",
+        persisted: true,
+      });
+    } catch (error) {
+      console.error("[POST /api/webhooks/engine] debate persist:", error);
+      return jsonError("Internal server error", 500);
     }
   }
 
+  const hasDebateId =
+    isNonEmptyString(body.debate_id) || isNonEmptyString(body.debateId);
+  if (hasDebateId) {
+    return jsonError(debateParsed.error, 400);
+  }
+
+  // --- Legacy ignite / swarm completion ---
   const parsed = extractEngineIgnitePayload(body);
   if ("error" in parsed) {
     return jsonError(parsed.error, 400);
@@ -151,45 +128,24 @@ export async function POST(request: NextRequest) {
   try {
     const existing = await prisma.swarm.findUnique({
       where: { id: swarmId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, messages: { select: { id: true } } },
     });
 
     if (!existing) {
       return jsonError("Swarm not found", 404);
     }
 
-    if (existing.status === "COMPLETED" && looksLikeIgnitePayload(engineData)) {
-      const hasMessages =
-        Array.isArray(engineData.messages) && engineData.messages.length > 0;
-      if (hasMessages) {
-        return jsonOk({ swarmId, status: "COMPLETED", duplicate: true });
-      }
+    if (
+      existing.status === "COMPLETED" &&
+      existing.messages.length > 0
+    ) {
+      return jsonOk({ swarmId, status: "COMPLETED", duplicate: true });
     }
 
-    if (looksLikeIgnitePayload(engineData)) {
-      await persistEngineIgniteResult(swarmId, engineData as EngineIgnitePayload);
-      return jsonOk({ swarmId, status: "COMPLETED", persisted: true });
-    }
-
-    const agentProfiles = extractAgentProfiles(body, engineData);
-    const metadataUpdate = buildSwarmMetadataUpdate(
-      engineData as EngineIgnitePayload,
-    );
-
-    const swarm = await prisma.swarm.update({
-      where: { id: swarmId },
-      data: {
-        status: "COMPLETED",
-        resultData: engineData as Prisma.InputJsonValue,
-        ...metadataUpdate,
-        ...(agentProfiles !== undefined ? { agentProfiles } : {}),
-      },
-      select: { id: true, status: true },
-    });
-
-    return jsonOk({ swarmId: swarm.id, status: swarm.status });
+    await persistEngineIgniteResult(swarmId, engineData);
+    return jsonOk({ swarmId, status: "COMPLETED", persisted: true });
   } catch (error) {
-    console.error("[POST /api/webhooks/engine]", error);
+    console.error("[POST /api/webhooks/engine] ignite persist:", error);
     return jsonError("Internal server error", 500);
   }
 }
