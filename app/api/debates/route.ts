@@ -8,7 +8,7 @@ import {
 } from "@/lib/api-auth";
 import { computeSwarmCreditCost } from "@/lib/billing";
 import { ensureClerkUser } from "@/lib/ensure-clerk-user";
-import { runEngineIgniteAndPersist } from "@/lib/persist-engine-ignite";
+import { runEngineDebateAndPersist } from "@/lib/persist-engine-ignite";
 import { prisma } from "@/lib/prisma";
 import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -82,6 +82,11 @@ function parseAgentCount(value: unknown): number | null {
   return value;
 }
 
+function parseModelMix(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function resolveCreditsPerAgent(modelTier: unknown): 1 | 5 {
   return typeof modelTier === "string" && modelTier.trim().toLowerCase() === "plus"
     ? 5
@@ -149,10 +154,16 @@ export async function POST(request: Request) {
   const query = body.query;
   const agentCount = parseAgentCount(body.agentCount);
   const creditsPerAgent = resolveCreditsPerAgent(body.modelTier);
+  const modelMix = parseModelMix(
+    body.modelMix ?? body.model_mix ?? body.modelMixPercent,
+  );
+
   const modelTier =
     typeof body.modelTier === "string" && body.modelTier.trim()
       ? body.modelTier.trim().toLowerCase()
-      : "lite";
+      : modelMix > 0
+        ? "plus"
+        : "lite";
 
   const advanced = isRecord(body.advancedVariables) ? body.advancedVariables : {};
 
@@ -216,6 +227,7 @@ export async function POST(request: Request) {
           status: "RUNNING",
           resultData: {
             modelTier,
+            modelMix,
             advancedVariables: {
               targetAudience,
               pricePoint,
@@ -239,17 +251,11 @@ export async function POST(request: Request) {
 
     after(async () => {
       try {
-        await runEngineIgniteAndPersist(
+        await runEngineDebateAndPersist(
           swarm.id,
           query.trim(),
           agentCount,
-          undefined,
-          {
-            modelTier,
-            targetAudience: targetAudience ?? undefined,
-            pricePoint: pricePoint ?? undefined,
-            marketingBudget: marketingBudget ?? undefined,
-          },
+          modelMix,
         );
       } catch (engineError) {
         console.error("[POST /api/debates] Background engine error:", engineError);

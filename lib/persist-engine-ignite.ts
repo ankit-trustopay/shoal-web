@@ -4,7 +4,7 @@ import {
   normalizeEvidenceItems,
   type EngineIgnitePayload,
 } from "@/lib/engine-payload";
-import { igniteEngine } from "@/lib/mirofish";
+import { igniteEngine, startDebateEngine } from "@/lib/mirofish";
 import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { prisma } from "@/lib/prisma";
 
@@ -157,4 +157,55 @@ export async function runEngineIgniteAndPersist(
   }
 
   await persistEngineIgniteResult(swarmId, engineData);
+}
+
+/**
+ * POST /debate on the Python engine. Throws if the engine does not return 200 OK.
+ * Completion is delivered asynchronously via the engine webhook.
+ */
+export async function runEngineDebateAndPersist(
+  debateId: string,
+  query: string,
+  agentCount: number,
+  modelMix: number,
+): Promise<void> {
+  await prisma.swarm.update({
+    where: { id: debateId },
+    data: { status: "RUNNING" },
+  });
+
+  const response = await startDebateEngine(
+    {
+      debate_id: debateId,
+      query,
+      agent_count: agentCount,
+      model_mix: modelMix,
+    },
+    { timeoutMs: 30_000 },
+  );
+
+  console.log("Engine Response Status:", response.status);
+  const responseText = await response.text();
+  console.log("Engine Response Body:", responseText);
+
+  if (!response.ok) {
+    throw new Error(
+      `Engine debate failed: HTTP ${response.status}${
+        responseText.trim() ? ` — ${responseText.trim()}` : ""
+      }`,
+    );
+  }
+
+  let parsed: { status?: string; debateId?: string } | null = null;
+  if (responseText.trim()) {
+    try {
+      parsed = JSON.parse(responseText) as { status?: string; debateId?: string };
+    } catch {
+      throw new Error("Engine returned invalid JSON");
+    }
+  }
+
+  if (parsed?.status === "deliberating") {
+    return;
+  }
 }
