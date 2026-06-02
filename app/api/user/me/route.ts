@@ -16,8 +16,8 @@ export async function OPTIONS() {
 /**
  * GET /api/user/me
  * Returns the authenticated user's account. On each request, ensureClerkUser runs
- * applyDailyCreditResetIfNeeded: on a new UTC calendar day, FREE users get credits
- * set to exactly 50 (not stacked with any prior balance).
+ * applyDailyCreditResetIfNeeded: on a new UTC calendar day, FREE users get dailyCredits
+ * set to exactly 150 (not stacked) while vaultCredits are preserved.
  */
 export async function GET() {
   const authResult = await requireAuthUserId();
@@ -34,9 +34,10 @@ export async function GET() {
       {
         id: user.id,
         email: user.email,
-        credits: user.credits,
+        dailyCredits: user.dailyCredits,
+        vaultCredits: user.vaultCredits,
         plan: user.plan,
-        lastCreditReset: user.lastCreditReset.toISOString(),
+        lastDailyReset: user.lastDailyReset.toISOString(),
       },
       200,
     );

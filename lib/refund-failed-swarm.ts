@@ -78,7 +78,8 @@ export async function markSwarmFailedAndRefund(
       await tx.user.update({
         where: { id: swarm.userId },
         data: {
-          credits: { increment: refundCredits },
+          // Refund into vaultCredits so users never lose paid balance.
+          vaultCredits: { increment: refundCredits },
         },
       });
     }

@@ -1,5 +1,5 @@
 /** SaaS billing defaults for new Clerk users. */
-export const DEFAULT_FREE_CREDITS = 50;
+export const DEFAULT_FREE_DAILY_CREDITS = 150;
 export const DEFAULT_USER_PLAN = "FREE";
 
 export function isFreePlan(plan: string): boolean {

@@ -14,9 +14,10 @@ const prisma = new PrismaClient({ adapter });
 const SEED_USER = {
   id: "test-user-001",
   email: "founder@shoalai.com",
-  credits: 50,
+  dailyCredits: 150,
+  vaultCredits: 0,
   plan: "FREE",
-  lastCreditReset: new Date(),
+  lastDailyReset: new Date(),
 } as const;
 
 async function main() {
@@ -25,7 +26,8 @@ async function main() {
     create: SEED_USER,
     update: {
       email: SEED_USER.email,
-      credits: SEED_USER.credits,
+      dailyCredits: SEED_USER.dailyCredits,
+      vaultCredits: SEED_USER.vaultCredits,
       plan: SEED_USER.plan,
     },
   });
@@ -33,7 +35,8 @@ async function main() {
   console.log("Seeded user:", {
     id: user.id,
     email: user.email,
-    credits: user.credits,
+    dailyCredits: user.dailyCredits,
+    vaultCredits: user.vaultCredits,
   });
 }
 

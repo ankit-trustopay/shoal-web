@@ -1,5 +1,9 @@
 import type { User } from "@/app/generated/prisma/client";
-import { DEFAULT_FREE_CREDITS, DEFAULT_USER_PLAN, isFreePlan } from "@/lib/billing";
+import {
+  DEFAULT_FREE_DAILY_CREDITS,
+  DEFAULT_USER_PLAN,
+  isFreePlan,
+} from "@/lib/billing";
 import { prisma } from "@/lib/prisma";
 
 /** UTC calendar day as YYYY-MM-DD for stable day-boundary checks. */
@@ -18,22 +22,22 @@ export function isNewUtcCalendarDay(
 }
 
 /**
- * On a new UTC calendar day, FREE-plan users receive exactly 50 credits (no stacking).
- * All users advance lastCreditReset so the check runs once per day.
+ * On a new UTC calendar day, FREE-plan users receive exactly 150 daily credits (no stacking).
+ * All users advance lastDailyReset so the check runs once per day.
  */
 export async function applyDailyCreditResetIfNeeded(user: User): Promise<User> {
-  if (!isNewUtcCalendarDay(user.lastCreditReset)) {
+  if (!isNewUtcCalendarDay(user.lastDailyReset)) {
     return user;
   }
 
   const now = new Date();
-  const data: { lastCreditReset: Date; credits?: number } = {
-    lastCreditReset: now,
+  const data: { lastDailyReset: Date; dailyCredits?: number } = {
+    lastDailyReset: now,
   };
 
   if (isFreePlan(user.plan)) {
-    // Strict overwrite — never add to balance; leftover credits expire at UTC midnight.
-    data.credits = DEFAULT_FREE_CREDITS;
+    // Strict overwrite — never add to balance; leftover daily credits expire at UTC midnight.
+    data.dailyCredits = DEFAULT_FREE_DAILY_CREDITS;
   }
 
   return prisma.user.update({
@@ -43,7 +47,8 @@ export async function applyDailyCreditResetIfNeeded(user: User): Promise<User> {
 }
 
 export const newUserDefaults = {
-  credits: DEFAULT_FREE_CREDITS,
+  dailyCredits: DEFAULT_FREE_DAILY_CREDITS,
+  vaultCredits: 0,
   plan: DEFAULT_USER_PLAN,
-  lastCreditReset: new Date(),
+  lastDailyReset: new Date(),
 } as const;

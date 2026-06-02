@@ -36,9 +36,10 @@ export async function ensureClerkUser(userId: string): Promise<User> {
     data: {
       id: userId,
       email,
-      credits: newUserDefaults.credits,
+      dailyCredits: newUserDefaults.dailyCredits,
+      vaultCredits: newUserDefaults.vaultCredits,
       plan: newUserDefaults.plan,
-      lastCreditReset: newUserDefaults.lastCreditReset,
+      lastDailyReset: newUserDefaults.lastDailyReset,
     },
   });
 

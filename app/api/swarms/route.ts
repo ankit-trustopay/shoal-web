@@ -14,6 +14,32 @@ import { markSwarmFailedAndRefund } from "@/lib/refund-failed-swarm";
 import { parseCreateSwarmBody } from "@/lib/swarm-validation";
 import { corsHeaderValues } from "@/lib/cors";
 
+type WalletSnapshot = { dailyCredits: number; vaultCredits: number };
+
+function canAffordWallet(wallet: WalletSnapshot, cost: number): boolean {
+  return wallet.dailyCredits + wallet.vaultCredits >= cost;
+}
+
+function deductFromWallet(
+  wallet: WalletSnapshot,
+  cost: number,
+): { dailyCredits: number; vaultCredits: number } {
+  if (cost <= 0) return wallet;
+
+  if (wallet.dailyCredits >= cost) {
+    return {
+      dailyCredits: wallet.dailyCredits - cost,
+      vaultCredits: wallet.vaultCredits,
+    };
+  }
+
+  const remainder = cost - wallet.dailyCredits;
+  return {
+    dailyCredits: 0,
+    vaultCredits: Math.max(0, wallet.vaultCredits - remainder),
+  };
+}
+
 /**
  * GET /api/swarms
  * List swarms for the authenticated Clerk user (newest first).
@@ -99,19 +125,45 @@ export async function POST(request: Request) {
     await ensureClerkUser(userId);
 
     const swarm = await prisma.$transaction(async (tx) => {
-      const debit = await tx.user.updateMany({
-        where: {
-          id: userId,
-          credits: { gte: cost },
-        },
-        data: {
-          credits: { decrement: cost },
-        },
-      });
+      // Implement two-wallet credit deduction (dailyCredits first, then vaultCredits).
+      // Use an optimistic concurrency check to avoid double-spends in races.
+      let attempt = 0;
+      let debited = false;
 
-      if (debit.count !== 1) {
-        return null;
+      while (attempt < 2 && !debited) {
+        attempt += 1;
+
+        const wallet = await tx.user.findUnique({
+          where: { id: userId },
+          select: { dailyCredits: true, vaultCredits: true },
+        });
+
+        if (!wallet) {
+          return null;
+        }
+
+        if (!canAffordWallet(wallet, cost)) {
+          return null;
+        }
+
+        const nextWallet = deductFromWallet(wallet, cost);
+
+        const updated = await tx.user.updateMany({
+          where: {
+            id: userId,
+            dailyCredits: wallet.dailyCredits,
+            vaultCredits: wallet.vaultCredits,
+          },
+          data: {
+            dailyCredits: nextWallet.dailyCredits,
+            vaultCredits: nextWallet.vaultCredits,
+          },
+        });
+
+        debited = updated.count === 1;
       }
+
+      if (!debited) return null;
 
       return tx.swarm.create({
         data: {
