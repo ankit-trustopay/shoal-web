@@ -122,6 +122,8 @@ export async function POST(request: NextRequest) {
         verdictLen: debateParsed.data.verdict.length,
         tldrCount: debateParsed.data.tldr.length,
         frictionCount: debateParsed.data.frictionMatrix.length,
+        debateRoomCount: debateParsed.data.debateRoom.length,
+        recommendation: debateParsed.data.executiveSummary.recommendation,
         priorStatus: exists.status,
       });
 

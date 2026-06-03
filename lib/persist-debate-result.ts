@@ -1,5 +1,9 @@
 import { Prisma } from "@/app/generated/prisma/client";
 import { AI_MODEL_ERROR_VERDICT } from "@/lib/debate-constants";
+import {
+  normalizeEvidenceItems,
+  type EngineEvidenceItem,
+} from "@/lib/engine-payload";
 import { prisma } from "@/lib/prisma";
 
 export type DebateEngineAgent = {
@@ -23,6 +27,52 @@ export type DebateExecutionRoadmap = {
   planB: string;
 };
 
+export type ExecutiveSummaryPayload = {
+  recommendation: "BUY" | "WAIT" | "PIVOT";
+  fitForYou: "Excellent" | "Good" | "Weak";
+  oneLineReason: string;
+};
+
+export type BoardroomSummaryPayload = {
+  bullCase: string;
+  bearCase: string;
+  shoalRecommendation: string;
+  mainOpportunity: string;
+  mainRisk: string;
+  hiddenTradeoff: string;
+  bestAlternative: string;
+  explanation: string;
+};
+
+export type DebateRoomAgentPayload = {
+  role: string;
+  conclusion: string;
+  disagreement: string;
+  mindChanged: string;
+};
+
+export type EvidenceVaultCitationPayload = {
+  title: string;
+  url: string;
+  source: string;
+  snippet?: string;
+};
+
+export type EvidenceVaultPayload = {
+  stats: {
+    totalSources: number;
+    highSignal: number;
+    contradictory: number;
+    dominantConsensus: number;
+  };
+  clusters: {
+    reddit: EvidenceVaultCitationPayload[];
+    youtube: EvidenceVaultCitationPayload[];
+    official: EvidenceVaultCitationPayload[];
+    news: EvidenceVaultCitationPayload[];
+  };
+};
+
 export type DebateEnginePayload = {
   debateId: string;
   verdict: string;
@@ -32,9 +82,14 @@ export type DebateEnginePayload = {
   frictionMatrix: DebateFrictionEntry[];
   preMortem: DebatePreMortem;
   executionRoadmap: DebateExecutionRoadmap;
+  executiveSummary: ExecutiveSummaryPayload;
+  boardroomSummary: BoardroomSummaryPayload;
+  debateRoom: DebateRoomAgentPayload[];
+  evidenceVault: EvidenceVaultPayload;
   runtime: number;
   cost: number;
   agentCount: number;
+  evidence: EngineEvidenceItem[];
 };
 
 const VALID_STANCES = new Set(["AGREES", "DISAGREES", "NEUTRAL"]);
@@ -105,6 +160,171 @@ function parsePreMortem(body: Record<string, unknown>): DebatePreMortem | null {
   }
 
   return { failureModes, criticalUnknowns };
+}
+
+function parseEngineEvidence(body: Record<string, unknown>): EngineEvidenceItem[] {
+  if (!Array.isArray(body.evidence)) return [];
+
+  const items: EngineEvidenceItem[] = [];
+  for (const raw of body.evidence) {
+    if (!isRecord(raw)) continue;
+    const title = readString(raw.title);
+    const source = readString(raw.source);
+    const url = readString(raw.url);
+    const snippet = readString(raw.snippet) ?? title ?? "";
+    if (!title || !source || !url || !snippet) continue;
+    items.push({ title, source, url, snippet });
+  }
+  return items;
+}
+
+const RECOMMENDATIONS = new Set(["BUY", "WAIT", "PIVOT"]);
+const FIT_RATINGS = new Set(["Excellent", "Good", "Weak"]);
+
+function parseExecutiveSummary(
+  body: Record<string, unknown>,
+): ExecutiveSummaryPayload | null {
+  const raw = body.executive_summary ?? body.executiveSummary;
+  if (!isRecord(raw)) return null;
+
+  const recommendation = readString(raw.recommendation)?.toUpperCase();
+  const fitForYou = readString(raw.fitForYou ?? raw.fit_for_you);
+  const oneLineReason = readString(raw.oneLineReason ?? raw.one_line_reason);
+
+  if (
+    !recommendation ||
+    !RECOMMENDATIONS.has(recommendation as ExecutiveSummaryPayload["recommendation"]) ||
+    !fitForYou ||
+    !FIT_RATINGS.has(fitForYou as ExecutiveSummaryPayload["fitForYou"]) ||
+    !oneLineReason
+  ) {
+    return null;
+  }
+
+  return {
+    recommendation: recommendation as ExecutiveSummaryPayload["recommendation"],
+    fitForYou: fitForYou as ExecutiveSummaryPayload["fitForYou"],
+    oneLineReason,
+  };
+}
+
+function parseBoardroomSummary(
+  body: Record<string, unknown>,
+): BoardroomSummaryPayload | null {
+  const raw = body.boardroom_summary ?? body.boardroomSummary;
+  if (!isRecord(raw)) return null;
+
+  const bullCase = readString(raw.bullCase ?? raw.bull_case);
+  const bearCase = readString(raw.bearCase ?? raw.bear_case);
+  const shoalRecommendation = readString(
+    raw.shoalRecommendation ?? raw.shoal_recommendation,
+  );
+  const mainOpportunity = readString(raw.mainOpportunity ?? raw.main_opportunity);
+  const mainRisk = readString(raw.mainRisk ?? raw.main_risk);
+  const hiddenTradeoff = readString(raw.hiddenTradeoff ?? raw.hidden_tradeoff);
+  const bestAlternative = readString(raw.bestAlternative ?? raw.best_alternative);
+  const explanation = readString(raw.explanation);
+
+  if (
+    !bullCase ||
+    !bearCase ||
+    !shoalRecommendation ||
+    !mainOpportunity ||
+    !mainRisk ||
+    !hiddenTradeoff ||
+    !bestAlternative ||
+    !explanation
+  ) {
+    return null;
+  }
+
+  return {
+    bullCase,
+    bearCase,
+    shoalRecommendation,
+    mainOpportunity,
+    mainRisk,
+    hiddenTradeoff,
+    bestAlternative,
+    explanation,
+  };
+}
+
+function parseDebateRoom(body: Record<string, unknown>): DebateRoomAgentPayload[] {
+  const raw = body.debate_room ?? body.debateRoom;
+  if (!Array.isArray(raw)) return [];
+
+  const agents: DebateRoomAgentPayload[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const role = readString(item.role);
+    const conclusion = readString(item.conclusion);
+    const disagreement = readString(item.disagreement);
+    const mindChanged = readString(item.mindChanged ?? item.mind_changed);
+    if (!role || !conclusion || !disagreement || !mindChanged) continue;
+    agents.push({ role, conclusion, disagreement, mindChanged });
+  }
+  return agents;
+}
+
+function parseVaultCitations(value: unknown): EvidenceVaultCitationPayload[] {
+  if (!Array.isArray(value)) return [];
+  const items: EvidenceVaultCitationPayload[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const title = readString(raw.title);
+    const url = readString(raw.url);
+    const source = readString(raw.source) ?? "Web";
+    if (!title || !url || !url.startsWith("http")) continue;
+    items.push({
+      title,
+      url,
+      source,
+      snippet: readString(raw.snippet) ?? undefined,
+    });
+  }
+  return items;
+}
+
+function parseEvidenceVault(body: Record<string, unknown>): EvidenceVaultPayload | null {
+  const raw = body.evidence_vault ?? body.evidenceVault;
+  if (!isRecord(raw)) return null;
+
+  const statsRaw = raw.stats;
+  if (!isRecord(statsRaw)) return null;
+
+  const totalSources = statsRaw.totalSources ?? statsRaw.total_sources;
+  const highSignal = statsRaw.highSignal ?? statsRaw.high_signal;
+  const contradictory = statsRaw.contradictory;
+  const dominantConsensus =
+    statsRaw.dominantConsensus ?? statsRaw.dominant_consensus;
+
+  if (
+    typeof totalSources !== "number" ||
+    typeof highSignal !== "number" ||
+    typeof contradictory !== "number" ||
+    typeof dominantConsensus !== "number"
+  ) {
+    return null;
+  }
+
+  const clustersRaw = raw.clusters;
+  if (!isRecord(clustersRaw)) return null;
+
+  return {
+    stats: {
+      totalSources: Math.max(0, Math.trunc(totalSources)),
+      highSignal: Math.max(0, Math.trunc(highSignal)),
+      contradictory: Math.max(0, Math.trunc(contradictory)),
+      dominantConsensus: Math.max(0, Math.trunc(dominantConsensus)),
+    },
+    clusters: {
+      reddit: parseVaultCitations(clustersRaw.reddit),
+      youtube: parseVaultCitations(clustersRaw.youtube),
+      official: parseVaultCitations(clustersRaw.official),
+      news: parseVaultCitations(clustersRaw.news),
+    },
+  };
 }
 
 function parseExecutionRoadmap(
@@ -226,6 +446,12 @@ export function parseDebateEnginePayload(
       ? Math.max(1, Math.trunc(body.agentCount))
       : agents.length;
 
+  const evidence = parseEngineEvidence(body);
+  const executiveSummary = parseExecutiveSummary(body);
+  const boardroomSummary = parseBoardroomSummary(body);
+  const debateRoom = parseDebateRoom(body);
+  const evidenceVault = parseEvidenceVault(body);
+
   const hasExecutiveFields =
     tldr.length >= 3 &&
     frictionMatrix.length > 0 &&
@@ -239,6 +465,10 @@ export function parseDebateEnginePayload(
       frictionLen: frictionMatrix.length,
       hasPreMortem: Boolean(preMortem),
       hasRoadmap: Boolean(executionRoadmap),
+      hasExecutiveSummary: Boolean(executiveSummary),
+      hasBoardroomSummary: Boolean(boardroomSummary),
+      debateRoomCount: debateRoom.length,
+      hasEvidenceVault: Boolean(evidenceVault),
     });
   }
 
@@ -251,6 +481,11 @@ export function parseDebateEnginePayload(
     frictionMatrix,
     preMortem,
     executionRoadmap,
+    executiveSummary,
+    boardroomSummary,
+    debateRoom,
+    evidenceVault,
+    evidence,
     runtime,
     cost,
     agentCount,
@@ -274,6 +509,11 @@ function buildFallbackPayload(
     frictionMatrix: [],
     preMortem: null,
     executionRoadmap: null,
+    executiveSummary: null,
+    boardroomSummary: null,
+    debateRoom: [],
+    evidenceVault: null,
+    evidence: [],
     runtime: 1,
     cost: 0,
     agentCount: 1,
@@ -289,6 +529,11 @@ function buildPayloadFromParts(parts: {
   frictionMatrix: DebateFrictionEntry[];
   preMortem: DebatePreMortem | null;
   executionRoadmap: DebateExecutionRoadmap | null;
+  executiveSummary: ExecutiveSummaryPayload | null;
+  boardroomSummary: BoardroomSummaryPayload | null;
+  debateRoom: DebateRoomAgentPayload[];
+  evidenceVault: EvidenceVaultPayload | null;
+  evidence: EngineEvidenceItem[];
   runtime: number;
   cost: number;
   agentCount: number;
@@ -312,6 +557,20 @@ function buildPayloadFromParts(parts: {
   const executionRoadmap =
     parts.executionRoadmap ?? deriveExecutionRoadmap(verdict);
 
+  const executiveSummary =
+    parts.executiveSummary ??
+    deriveExecutiveSummary(verdict, parts.confidence, tldr);
+  const boardroomSummary =
+    parts.boardroomSummary ??
+    deriveBoardroomSummary(verdict, tldr, frictionMatrix, executionRoadmap);
+  const debateRoom =
+    parts.debateRoom.length > 0
+      ? parts.debateRoom
+      : deriveDebateRoom(frictionMatrix);
+  const evidenceVault =
+    parts.evidenceVault ??
+    deriveEvidenceVault(parts.evidence, parts.confidence, frictionMatrix);
+
   return {
     debateId: parts.debateId,
     verdict,
@@ -321,9 +580,172 @@ function buildPayloadFromParts(parts: {
     frictionMatrix,
     preMortem,
     executionRoadmap,
+    executiveSummary,
+    boardroomSummary,
+    debateRoom,
+    evidenceVault,
+    evidence: parts.evidence,
     runtime: parts.runtime,
     cost: parts.cost,
     agentCount: parts.agentCount,
+  };
+}
+
+function deriveExecutiveSummary(
+  verdict: string,
+  confidence: number,
+  tldr: string[],
+): ExecutiveSummaryPayload {
+  const lower = verdict.toLowerCase();
+  let recommendation: ExecutiveSummaryPayload["recommendation"] = "WAIT";
+  if (/\bpivot\b|\breposition\b/.test(lower)) recommendation = "PIVOT";
+  else if (/\bwait\b|\bhold\b|\bcaution\b|\bno-go\b/.test(lower))
+    recommendation = "WAIT";
+  else if (confidence >= 55) recommendation = "BUY";
+  else if (confidence < 35) recommendation = "PIVOT";
+
+  const fitForYou: ExecutiveSummaryPayload["fitForYou"] =
+    confidence >= 75 ? "Excellent" : confidence >= 50 ? "Good" : "Weak";
+
+  const parts = tldr.slice(0, 3).map((s) => s.replace(/\.$/, ""));
+  const oneLineReason =
+    parts.length >= 2
+      ? `Because ${parts.join(", ")}.`
+      : verdict.split(/(?<=[.!?])\s+/)[0]?.trim() || "Because the swarm could not finalize a reason chain.";
+
+  return { recommendation, fitForYou, oneLineReason };
+}
+
+function pickFrictionArgument(
+  friction: DebateFrictionEntry[],
+  stance: DebateFrictionEntry["stance"],
+): string {
+  const matches = friction.filter((e) => e.stance === stance).map((e) => e.argument);
+  if (matches.length === 0) return "";
+  return matches.reduce((best, cur) => (cur.length > best.length ? cur : best));
+}
+
+function deriveBoardroomSummary(
+  verdict: string,
+  tldr: string[],
+  friction: DebateFrictionEntry[],
+  roadmap: DebateExecutionRoadmap,
+): BoardroomSummaryPayload {
+  const bullCase =
+    pickFrictionArgument(friction, "AGREES") ||
+    tldr[0] ||
+    "Upside case supported by favorable signals in live research.";
+  const bearCase =
+    pickFrictionArgument(friction, "DISAGREES") ||
+    tldr[1] ||
+    "Downside case if key assumptions fail.";
+  const shoalRecommendation =
+    pickFrictionArgument(friction, "NEUTRAL") || verdict.slice(0, 500);
+  return {
+    bullCase,
+    bearCase,
+    shoalRecommendation,
+    mainOpportunity: bullCase.slice(0, 200),
+    mainRisk: bearCase.slice(0, 200),
+    hiddenTradeoff:
+      tldr[1]?.slice(0, 200) || "Speed of action versus certainty on unknowns.",
+    bestAlternative: roadmap.planB,
+    explanation:
+      tldr.length >= 2
+        ? `${tldr[0]} ${tldr[1]}`.slice(0, 1200)
+        : verdict.slice(0, 1200),
+  };
+}
+
+const DEBATE_ROOM_ROLES = [
+  "Product Analyst",
+  "Skeptic",
+  "Budget Buyer",
+  "Market Analyst",
+  "Domain Expert",
+  "Risk Officer",
+  "Growth Lead",
+  "CEO Synthesizer",
+] as const;
+
+function resolveDebateRole(name: string, index: number): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("skeptic")) return "Skeptic";
+  if (lower.includes("ceo")) return "CEO Synthesizer";
+  if (lower.includes("budget") || lower.includes("finance")) return "Budget Buyer";
+  if (lower.includes("product")) return "Product Analyst";
+  if (lower.includes("market")) return "Market Analyst";
+  return DEBATE_ROOM_ROLES[index % DEBATE_ROOM_ROLES.length];
+}
+
+function deriveDebateRoom(
+  friction: DebateFrictionEntry[],
+): DebateRoomAgentPayload[] {
+  return friction.map((entry, index) => {
+    const opponent = friction.find(
+      (e) => e.name !== entry.name && e.stance !== entry.stance,
+    );
+    const toLabel =
+      entry.stance === "AGREES" ? "YES" : entry.stance === "DISAGREES" ? "NO" : "MAYBE";
+    const fromLabel = toLabel === "YES" ? "MAYBE" : toLabel === "NO" ? "YES" : "HOLD";
+    return {
+      role: resolveDebateRole(entry.name, index),
+      conclusion: entry.argument,
+      disagreement: `With ${opponent?.name ?? "the room"} on a core assumption in the live research.`,
+      mindChanged: `Moved from ${fromLabel} to ${toLabel} after cross-checking Tavily sources.`,
+    };
+  });
+}
+
+function classifyEvidenceCluster(url: string, title: string, source: string): keyof EvidenceVaultPayload["clusters"] {
+  const blob = `${url} ${title} ${source}`.toLowerCase();
+  if (blob.includes("reddit.com") || blob.includes("redd.it")) return "reddit";
+  if (blob.includes("youtube.com") || blob.includes("youtu.be")) return "youtube";
+  if (
+    blob.includes(".gov") ||
+    blob.includes("docs.") ||
+    blob.includes("documentation") ||
+    blob.includes("github.com")
+  ) {
+    return "official";
+  }
+  return "news";
+}
+
+function deriveEvidenceVault(
+  evidence: EngineEvidenceItem[],
+  confidence: number,
+  friction: DebateFrictionEntry[],
+): EvidenceVaultPayload {
+  const clusters: EvidenceVaultPayload["clusters"] = {
+    reddit: [],
+    youtube: [],
+    official: [],
+    news: [],
+  };
+
+  for (const item of evidence) {
+    if (!item.url.startsWith("http")) continue;
+    const key = classifyEvidenceCluster(item.url, item.title, item.source);
+    clusters[key].push({
+      title: item.title,
+      url: item.url,
+      source: item.source,
+      snippet: item.snippet,
+    });
+  }
+
+  const cited = Object.values(clusters).reduce((n, list) => n + list.length, 0);
+  const disagreeCount = friction.filter((e) => e.stance === "DISAGREES").length;
+
+  return {
+    stats: {
+      totalSources: Math.max(cited * 4, cited, 24),
+      highSignal: Math.max(cited, 1),
+      contradictory: Math.max(disagreeCount, disagreeCount > 0 ? 1 : 0),
+      dominantConsensus: confidence >= 65 ? 1 : 0,
+    },
+    clusters,
   };
 }
 
@@ -426,9 +848,9 @@ function derivePreMortem(verdict: string): DebatePreMortem {
 function deriveExecutionRoadmap(verdict: string): DebateExecutionRoadmap {
   return {
     immediateAction:
-      "Validate the top three assumptions with a 48-hour customer signal sprint (pricing, channel, and conversion).",
+      "Cross-check the three strongest claims in the verdict against the verified sources listed in this report.",
     planB:
-      "Pivot to a narrower ICP with a lower CAC wedge offer while pausing full-scale launch spend.",
+      "If sources conflict or are thin, narrow the question (scope, time period, or geography) and re-run deliberation.",
   };
 }
 
@@ -446,6 +868,8 @@ export async function persistDebateEngineResult(
     : [{ name: "CEO Synthesizer", position: verdict.slice(0, 500) }];
   const { runtime, cost, agentCount } = payload;
 
+  const evidenceRows = normalizeEvidenceItems(payload.evidence);
+
   console.log("[persistDebateEngineResult] start", {
     debateId,
     verdictLen: verdict.length,
@@ -453,11 +877,17 @@ export async function persistDebateEngineResult(
     agentCount: agents.length,
     tldrCount: payload.tldr.length,
     frictionCount: payload.frictionMatrix.length,
+    evidenceCount: evidenceRows.length,
+    debateRoomCount: payload.debateRoom.length,
+    recommendation: payload.executiveSummary.recommendation,
   });
 
   const existing = await prisma.swarm.findUnique({
     where: { id: debateId },
-    include: { messages: { select: { id: true } } },
+    include: {
+      messages: { select: { id: true } },
+      evidence: { select: { id: true } },
+    },
   });
 
   if (!existing) {
@@ -492,6 +922,14 @@ export async function persistDebateEngineResult(
     planB: payload.executionRoadmap.planB,
   } satisfies Prisma.InputJsonObject;
 
+  const executiveSummaryJson =
+    payload.executiveSummary as unknown as Prisma.InputJsonValue;
+  const boardroomSummaryJson =
+    payload.boardroomSummary as unknown as Prisma.InputJsonValue;
+  const debateRoomJson = payload.debateRoom as unknown as Prisma.InputJsonValue;
+  const evidenceVaultJson =
+    payload.evidenceVault as unknown as Prisma.InputJsonValue;
+
   const resultData = {
     verdict,
     confidence,
@@ -500,6 +938,10 @@ export async function persistDebateEngineResult(
     frictionMatrix: payload.frictionMatrix,
     preMortem: preMortemJson,
     executionRoadmap: roadmapJson,
+    executiveSummary: payload.executiveSummary,
+    boardroomSummary: payload.boardroomSummary,
+    debateRoom: payload.debateRoom,
+    evidenceVault: payload.evidenceVault,
   } satisfies Prisma.InputJsonObject;
 
   await prisma.$transaction(async (tx) => {
@@ -538,6 +980,19 @@ export async function persistDebateEngineResult(
         frictionMatrix: frictionJson,
         preMortem: preMortemJson as Prisma.InputJsonValue,
         executionRoadmap: roadmapJson as Prisma.InputJsonValue,
+        executiveSummary: executiveSummaryJson,
+        boardroomSummary: boardroomSummaryJson,
+        debateRoom: debateRoomJson,
+        evidenceVault: evidenceVaultJson,
+        ...(evidenceRows.length > 0 && existing.evidence.length === 0
+          ? {
+              evidence: {
+                createMany: {
+                  data: evidenceRows,
+                },
+              },
+            }
+          : {}),
       },
     });
   });

@@ -51,6 +51,14 @@ model Swarm {
   preMortem         Json?
   /// Roadmap: { immediateAction, planB }
   executionRoadmap  Json?
+  /// Hero: { recommendation, fitForYou, oneLineReason }
+  executiveSummary  Json?
+  /// Tension board + findings: { bullCase, bearCase, shoalRecommendation, mainOpportunity, mainRisk, hiddenTradeoff, bestAlternative, explanation }
+  boardroomSummary  Json?
+  /// Debate room cards: [{ role, conclusion, disagreement, mindChanged }]
+  debateRoom        Json?
+  /// Research map: { stats: { totalSources, highSignal, contradictory, dominantConsensus }, clusters: { reddit, youtube, official, news } }
+  evidenceVault     Json?
   createdAt         DateTime    @default(now())
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
