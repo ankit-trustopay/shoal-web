@@ -120,6 +120,8 @@ export async function POST(request: NextRequest) {
       console.log("[webhook/engine] persisting debate", {
         debateId: debateParsed.data.debateId,
         verdictLen: debateParsed.data.verdict.length,
+        tldrCount: debateParsed.data.tldr.length,
+        frictionCount: debateParsed.data.frictionMatrix.length,
         priorStatus: exists.status,
       });
 
