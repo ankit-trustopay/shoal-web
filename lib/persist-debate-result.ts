@@ -111,6 +111,10 @@ function readStringArray(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function isHttpUrl(value: unknown): value is string {
+  return typeof value === "string" && value.trim().startsWith("http");
+}
+
 function normalizeStance(value: unknown): DebateFrictionEntry["stance"] | null {
   if (typeof value !== "string") return null;
   const upper = value.trim().toUpperCase();
@@ -275,7 +279,7 @@ function parseVaultCitations(value: unknown): EvidenceVaultCitationPayload[] {
     const title = readString(raw.title);
     const url = readString(raw.url);
     const source = readString(raw.source) ?? "Web";
-    if (!title || !url || !url.startsWith("http")) continue;
+    if (!title || !isHttpUrl(url)) continue;
     items.push({
       title,
       url,
@@ -725,13 +729,26 @@ function deriveEvidenceVault(
   };
 
   for (const item of evidence) {
-    if (!item.url.startsWith("http")) continue;
-    const key = classifyEvidenceCluster(item.url, item.title, item.source);
+    if (!isHttpUrl(item.url)) continue;
+    const url = item.url.trim();
+    const title =
+      typeof item.title === "string" && item.title.trim()
+        ? item.title.trim()
+        : url;
+    const source =
+      typeof item.source === "string" && item.source.trim()
+        ? item.source.trim()
+        : "Web";
+    const snippet =
+      typeof item.snippet === "string" && item.snippet.trim()
+        ? item.snippet.trim()
+        : undefined;
+    const key = classifyEvidenceCluster(url, title, source);
     clusters[key].push({
-      title: item.title,
-      url: item.url,
-      source: item.source,
-      snippet: item.snippet,
+      title,
+      url,
+      source,
+      snippet,
     });
   }
 
