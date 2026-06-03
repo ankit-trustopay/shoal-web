@@ -1,5 +1,6 @@
 import { Prisma } from "@/app/generated/prisma/client";
 import { computeSwarmCreditCost } from "@/lib/billing";
+import { swarmResultIndicatesEngineFailure } from "@/lib/debate-engine-failure";
 import { prisma } from "@/lib/prisma";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -55,7 +56,11 @@ export async function markSwarmFailedAndRefund(
       return { ok: false, reason: "not_found" };
     }
 
-    if (swarm.status === "COMPLETED") {
+    const completedWithEngineError =
+      swarm.status === "COMPLETED" &&
+      swarmResultIndicatesEngineFailure(swarm.resultData);
+
+    if (swarm.status === "COMPLETED" && !completedWithEngineError) {
       return { ok: false, reason: "already_completed" };
     }
 

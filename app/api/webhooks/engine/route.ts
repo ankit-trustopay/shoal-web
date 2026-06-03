@@ -3,6 +3,10 @@ import { jsonError, jsonOk } from "@/lib/api-response";
 import { extractEngineIgnitePayload } from "@/lib/parse-engine-webhook";
 import { persistEngineIgniteResult } from "@/lib/persist-engine-ignite";
 import {
+  isDebateWebhookFailure,
+  resolveWebhookFailureMessage,
+} from "@/lib/debate-engine-failure";
+import {
   parseDebateEnginePayload,
   persistDebateEngineResult,
 } from "@/lib/persist-debate-result";
@@ -106,19 +110,61 @@ export async function POST(request: NextRequest) {
   // --- Canonical debate completion from Python ---
   const debateParsed = parseDebateEnginePayload(body);
   if (debateParsed.ok) {
+    const debateId = debateParsed.data.debateId;
+    const isFailure = isDebateWebhookFailure(body, debateParsed.data.verdict);
+
     try {
       const exists = await prisma.swarm.findUnique({
-        where: { id: debateParsed.data.debateId },
-        select: { id: true, status: true },
+        where: { id: debateId },
+        select: { id: true, status: true, agentCount: true, cost: true },
       });
 
       if (!exists) {
-        console.error("[webhook/engine] debate not found", debateParsed.data.debateId);
+        console.error("[webhook/engine] debate not found", debateId);
         return jsonError("Debate not found", 404);
       }
 
+      if (isFailure) {
+        const errorMessage = resolveWebhookFailureMessage(
+          body,
+          debateParsed.data.verdict,
+        );
+
+        console.log("[webhook/engine] debate engine failure -> auto-refund", {
+          debateId,
+          priorStatus: exists.status,
+          verdictPreview: debateParsed.data.verdict.slice(0, 120),
+          agentCount: exists.agentCount,
+          cost: exists.cost,
+        });
+
+        const refundResult = await markSwarmFailedAndRefund(
+          debateId,
+          errorMessage,
+        );
+
+        if (!refundResult.ok) {
+          if (refundResult.reason === "not_found") {
+            return jsonError("Debate not found", 404);
+          }
+          return jsonError(
+            "Debate already completed with a valid verdict; refund skipped",
+            409,
+          );
+        }
+
+        return jsonOk({
+          debateId,
+          status: "FAILED",
+          persisted: true,
+          autoRefund: true,
+          refundedCredits: refundResult.refundedCredits,
+          alreadyRefunded: refundResult.alreadyRefunded,
+        });
+      }
+
       console.log("[webhook/engine] persisting debate", {
-        debateId: debateParsed.data.debateId,
+        debateId,
         verdictLen: debateParsed.data.verdict.length,
         tldrCount: debateParsed.data.tldr.length,
         frictionCount: debateParsed.data.frictionMatrix.length,
@@ -130,12 +176,12 @@ export async function POST(request: NextRequest) {
       await persistDebateEngineResult(debateParsed.data);
 
       return jsonOk({
-        debateId: debateParsed.data.debateId,
+        debateId,
         status: "completed",
         persisted: true,
       });
     } catch (error) {
-      console.error("[webhook/engine] debate persist:", error);
+      console.error("[webhook/engine] debate handler:", error);
       return jsonError("Internal server error", 500);
     }
   }
