@@ -82,6 +82,8 @@ export async function chargeDebateCreditsOnEngineStart(
     }
 
     let debited = false;
+    let creditDebitDaily = 0;
+    let creditDebitVault = 0;
     for (let attempt = 0; attempt < 2 && !debited; attempt += 1) {
       const wallet = await tx.user.findUnique({
         where: { id: swarm.userId },
@@ -97,6 +99,9 @@ export async function chargeDebateCreditsOnEngineStart(
       }
 
       const nextWallet = deductFromWallet(wallet, cost);
+      creditDebitDaily = Math.max(0, wallet.dailyCredits - nextWallet.dailyCredits);
+      creditDebitVault = Math.max(0, wallet.vaultCredits - nextWallet.vaultCredits);
+
       const updated = await tx.user.updateMany({
         where: {
           id: swarm.userId,
@@ -109,6 +114,18 @@ export async function chargeDebateCreditsOnEngineStart(
         },
       });
       debited = updated.count === 1;
+
+      if (debited) {
+        console.log("[chargeDebateCredits] debited wallet", {
+          debateId,
+          userId: swarm.userId,
+          cost,
+          creditDebitDaily,
+          creditDebitVault,
+          before: wallet,
+          after: nextWallet,
+        });
+      }
     }
 
     if (!debited) {
@@ -124,6 +141,8 @@ export async function chargeDebateCreditsOnEngineStart(
           creditsCharged: true,
           chargedAt: new Date().toISOString(),
           plannedCost: cost,
+          creditDebitDaily,
+          creditDebitVault,
         } as Prisma.InputJsonValue,
       },
     });
